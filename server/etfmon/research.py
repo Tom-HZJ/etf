@@ -14,9 +14,9 @@ import math
 from datetime import datetime, timedelta
 from typing import Any, Mapping, Sequence
 
-from . import config, store
+from . import analytics, config, store
 
-RULE_VERSION = 'trend-preparation-two-paths-v2'
+RULE_VERSION = 'self-trend-two-paths-v3'
 PARAMETERS = {'ma_fast': 20, 'ma_slow': 60, 'atr': 14,
               'extension_atr': 1.5, 'maximum_risk_atr': 2.0,
               'setup_lookback': 5, 'valid_next_sessions': 1,
@@ -62,14 +62,11 @@ def atr(bars: Sequence[Mapping[str, Any]]) -> float | None:
     return value if value > 0 else None
 
 
-def market_regime(bars, cutoff):
-    data, bad = clean_bars(bars, cutoff)
-    if bad or len(data) < 65: return {'state': 'unknown', 'date': data[-1]['date'] if data else None}
-    closes = [b['close'] for b in data]
-    ma20, ma60 = mean(closes[-20:]), mean(closes[-60:])
-    strong = closes[-1] > ma20 > ma60 and ma20 > mean(closes[-25:-5])
-    return {'state': 'supportive' if strong else 'cautious', 'date': data[-1]['date'],
-            'close': closes[-1], 'ma20': ma20, 'ma60': ma60}
+def expected_close_date(moment):
+    """Own-data freshness policy; no index or other ETF is consulted."""
+    target=datetime.fromisoformat(completed_cutoff(moment)).date()
+    while target.weekday()>=5:target-=timedelta(days=1)
+    return target.isoformat()
 
 
 def _contexts(data):
@@ -90,7 +87,7 @@ def _contexts(data):
     return result
 
 
-def screen(entity, bars, benchmark, cutoff, heat=None, *, collect_events=False):
+def screen(entity, bars, cutoff, heat=None, *, collect_events=False):
     """Causal two-path research: preparation is separate from qualified signals."""
     data,bad=clean_bars(bars,cutoff);count=len(data)
     result={'code':entity['code'],'name':entity.get('name',entity['code']),
@@ -100,7 +97,7 @@ def screen(entity, bars, benchmark, cutoff, heat=None, *, collect_events=False):
             'price_event_date':None,'reference_close':None,'invalidation_close':None,
             'entry_distance_atr':None,'risk_distance_atr':None,'risk_distance_pct':None,
             'evaluation_not_before':None,'eligible':False,'prealert':False,'trend_confirmed':False,
-            'market_allowed':benchmark.get('state')=='supportive','history_bars':count,
+            'history_bars':count,'decision_scope':'self_only','external_reference_required':False,
             'history_sufficient':count>=65,'paths':[],
             'exit_plan':['股票ETF按T+1可卖后复核结构失效价；跳空可能超过计划风险',
                          '连续两日收盘低于MA20，结束本次观察',
@@ -110,16 +107,11 @@ def screen(entity, bars, benchmark, cutoff, heat=None, *, collect_events=False):
         return {**result,'phase':'separate_rules','reason':'跨境或商品品种需独立研究，未套用股票ETF规则'}
     if bad:return {**result,'phase':'invalid_data','reason':'检测到无效OHLC，已暂停信号并交给后台补数'}
     if count<25:return {**result,'phase':'history_short','reason':f'现有{count}根完整日线；准备形态至少25根，完整触发至少65根'}
-    if data[-1]['date']!=benchmark.get('date'):
-        return {**result,'phase':'stale','reason':'标的与基准日线日期不一致，暂停信号'}
     contexts=_contexts(data);current=contexts[-1];vol=current['atr14'];close=data[-1]['close']
     result.update(reference_close=close,ma20=current['ma20'],ma60=current['ma60'],atr14=vol,
                   trend_confirmed=current['strong'],evaluation_not_before=data[-1]['date']+'T15:10:00+08:00')
     if not vol or vol<=0:return result
     result['entry_distance_atr']=round((close-current['ma20'])/vol,3)
-    market_states=benchmark.get('_states',{})
-    def market_on(day):
-        return benchmark.get('state')=='supportive' if day==benchmark.get('date') else market_states.get(day)=='supportive'
     def geometry(i,low):
         c=contexts[i];v=c['atr14']
         if not v or not c['ma20']:return False,None,None
@@ -145,7 +137,7 @@ def screen(entity, bars, benchmark, cutoff, heat=None, *, collect_events=False):
             price_event=data[i]['date']
             good,stop,risk=geometry(i,min(r['low'] for r in data[touch:i+1]))
             if i==count-1:pull_today={'good':good,'stop':stop,'risk':risk,'setup_date':data[touch]['date']}
-            if good and market_on(data[i]['date']):
+            if good:
                 if collect_events:events.append({'date':data[i]['date'],'path':'pullback','invalidation':stop})
                 last_valid=data[i]['date'];last_valid_index=i;consumed=i;touch=None
         high=max(r['high'] for r in data[i-20:i])
@@ -154,7 +146,7 @@ def screen(entity, bars, benchmark, cutoff, heat=None, *, collect_events=False):
             price_event=data[i]['date']
             good,stop,risk=geometry(i,min(r['low'] for r in data[i-4:i+1]))
             if i==count-1:break_today={'good':good,'stop':stop,'risk':risk,'setup_date':data[i-20]['date']}
-            if good and market_on(data[i]['date']):
+            if good:
                 if collect_events:events.append({'date':data[i]['date'],'path':'breakout','invalidation':stop})
                 last_valid=data[i]['date'];last_valid_index=i
         prior_break=crossing
@@ -163,16 +155,13 @@ def screen(entity, bars, benchmark, cutoff, heat=None, *, collect_events=False):
         label='首次通道突破' if name=='breakout' else '回踩后首次符合完整条件'
         result['paths'].append({'path':name,'label':label,'price_event_today':event is not None,
                                 'geometry_allowed':bool(event and event['good']),
-                                'eligible':bool(event and event['good'] and result['market_allowed'])})
+                                'eligible':bool(event and event['good'])})
     chosen=next((v for v in (break_today,pull_today) if v and v['good']),None)
     if chosen:
         result.update(invalidation_close=round(chosen['stop'],4),risk_distance_atr=round(chosen['risk']/vol,3),
                       risk_distance_pct=round(chosen['risk']/close,5),setup_date=chosen['setup_date'])
-        if result['market_allowed']:
-            return {**result,'phase':'triggered','eligible':True,'trigger_date':data[-1]['date'],
-                    'reason':'今日首次满足一条完整研究路径；下一交易日仅进入纸面观察，不代表成交或收益'}
-        return {**result,'phase':'market_caution','prealert':True,
-                'reason':'标的出现符合位置约束的转强，大盘门槛未通过；只保留观察预警'}
+        return {**result,'phase':'triggered','eligible':True,'trigger_date':data[-1]['date'],
+                'reason':'自身首次满足完整研究路径与位置风险条件；下一交易日纸面观察，不代表成交或收益'}
     recent_range=sum(r['high']-r['low'] for r in data[-5:])/5
     near_high=max(r['high'] for r in data[-21:-1])-close<=vol
     prepare_break=(0<=result['entry_distance_atr']<=PARAMETERS['extension_atr'] and close>=current['ma20'] and near_high and recent_range<=vol)
@@ -212,34 +201,28 @@ def assess_position(position, bars, cutoff):
 
 def _build_payload(moment=None):
     moment = moment or store.now(); cutoff = completed_cutoff(moment)
-    benchmark_bars, _ = clean_bars(store.load_bars('sh000300'), cutoff)
-    benchmark = market_regime(benchmark_bars, cutoff)
-    market_states = {bar['date']: 'supportive' if context['strong'] else 'cautious' for bar, context in zip(benchmark_bars, _contexts(benchmark_bars))}
-    screen_benchmark = {**benchmark, '_states': market_states}
-    latest = store.load_hotspots_latest()
-    heats = {x['code']: x.get('heat') for x in latest.get('rows', [])}
-    rows = []
+    rows = [];sources=set();collected=[];target=expected_close_date(moment)
     for code in config.HOTSPOT_CODES:
         e = config.ENTITIES[code]
-        rows.append(screen({'code': code, 'name': e.name, 'direction': e.direction, 'group': e.group},
-                           store.load_bars(code), screen_benchmark, cutoff, heats.get(code)))
+        own_bars=store.load_bars(code)
+        heat=analytics.analyze_hotspot_row({'code':code,'name':e.name,'direction':e.direction,'group':e.group},[b for b in own_bars if str(b.get('date',''))<=cutoff],{})['heat']
+        row=screen({'code': code, 'name': e.name, 'direction': e.direction, 'group': e.group},own_bars,cutoff,heat)
+        if row['phase']!='separate_rules' and row.get('data_date') and row['data_date']<target:
+            row.update(eligible=False,prealert=False,phase='stale',reason='该ETF自身完整日线未更新，暂停本ETF的新观察判断')
+        rows.append(row)
         provenance = store.load_bars_payload(code)
         rows[-1]['provenance'] = {k: provenance.get(k) for k in ('source', 'updated_at', 'adjustment')}
+        if provenance.get('source'):sources.add(provenance['source'])
+        if provenance.get('updated_at'):collected.append(provenance['updated_at'])
     rows.sort(key=lambda r: (not r['eligible'], not r['prealert'], r['phase'], -(r.get('heat') or 0)))
-    local = moment.astimezone(config.SHANGHAI_TZ)
-    expected = datetime.fromisoformat(cutoff).date()
-    while expected.weekday() >= 5:
-        expected -= timedelta(days=1)
-    stale = benchmark.get('date') != expected.isoformat()
-    if stale:
-        for row in rows:
-            row.update(eligible=False, phase='stale', reason='今日完整基准日线尚未到齐，暂停候选判断')
-    bench_source = store.load_bars_payload('sh000300')
+    usable=[r for r in rows if r['phase']!='separate_rules']
+    stale=not any(r.get('data_date') and r['data_date']>=target for r in usable)
     return {'generated_at': moment.isoformat(timespec='seconds'), 'rule_version': RULE_VERSION,
-            'mode': 'experimental_reconstruction', 'as_of': benchmark.get('date'),
-            'benchmark': {'code': 'sh000300', **benchmark, 'source': bench_source.get('source'),
-                          'updated_at': bench_source.get('updated_at')}, 'parameters': PARAMETERS,
+            'mode': 'experimental_reconstruction','decision_scope':'self_only','external_reference_required':False,
+            'as_of':max((r['data_date'] for r in usable if r.get('data_date')),default=None),
+            'sources':sorted(sources),'latest_collected_at':max(collected,default=None),'parameters': PARAMETERS,
             'data_stale': stale,
+            'stale_count':sum(r['phase']=='stale' for r in usable),
             'rows': rows, 'candidate_count': sum(r['eligible'] for r in rows),
             'prealert_count': sum(r['prealert'] for r in rows),
             'limitations': ['研究假设，未做样本外收益验证；热度不是胜率',
@@ -252,8 +235,7 @@ _CACHE_KEY=None
 _CACHE_PAYLOAD=None
 
 def _fingerprint(moment):
-    paths=[store.bars_path(c) for c in [*config.HOTSPOT_CODES,'sh000300']]
-    paths.append(store.path_for('hotspots','latest.json'))
+    paths=[store.bars_path(c) for c in config.HOTSPOT_CODES]
     stamps=[]
     for path in paths:
         try:

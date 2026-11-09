@@ -240,8 +240,10 @@ def dispatch_get(app: views.App, path: str, query: Mapping[str, list[str]]) -> d
         try:return rallies.build_payload(code)
         except ValueError as exc:raise ApiError(400,'bad_request',str(exc)) from exc
     if path == "/api/research/evaluation":
-        return store.read_json(store.path_for('research','evaluation-latest.json'),
-                               {'state':'pending','rows':[],'notes':['后台会在完整日线到齐后自动生成事件复核']})
+        from . import research
+        pending={'state':'pending','rule_version':research.RULE_VERSION,'rows':[],'notes':['后台会按当前独立规则自动生成事件复核']}
+        cached=store.read_json(store.path_for('research','evaluation-latest.json'),pending)
+        return cached if cached.get('rule_version')==research.RULE_VERSION else pending
     if path == "/api/holdings":
         from . import holdings
         code = _parse_code(_first(query, "code"))

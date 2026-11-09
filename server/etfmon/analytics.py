@@ -998,36 +998,35 @@ STATE_ORDER: tuple[str, ...] = ("hot", "warming", "crowded", "cooling", "fading"
 
 
 def heat_score(row: Mapping[str, Any]) -> int:
-    """热度分（0~100）：相对强度 40 + 5 日动量 20 + MA 趋势 20 + 量能 15 + 新高 5。"""
-    relative = clip(((to_float(row.get("relative_20d")) or 0) + 0.15) / 0.30)
+    """热度分（0~100）：自身20日动量40 + 5 日动量 20 + MA 趋势 20 + 量能 15 + 新高 5。"""
+    own_momentum = clip(((to_float(row.get("ret_20d")) or 0) + 0.15) / 0.30)
     momentum = clip(((to_float(row.get("ret_5d")) or 0) + 0.10) / 0.20)
     trend = (0.5 if row.get("close_above_ma20") else 0.0) + (0.5 if row.get("ma20_above_ma60") else 0.0)
     volume_ratio = to_float(row.get("volume_ratio_5d"))
     volume = clip((((volume_ratio if volume_ratio is not None else 0.8) - 0.8) / 1.2))
     breakout = 1.0 if row.get("breakout_20d") else 0.0
-    score = 40 * relative + 20 * momentum + 20 * trend + 15 * volume + 5 * breakout
-    if row.get("relative_20d") is None:
+    score = 40 * own_momentum + 20 * momentum + 20 * trend + 15 * volume + 5 * breakout
+    if row.get("ret_20d") is None:
         score = min(score, 75.0)
     return int(round(clip(score, 0, 100)))
 
 
 def hot_state(row: Mapping[str, Any]) -> str:
-    """状态标签：由年内位置/动量/相对强度/量能确定，规则写进 method。"""
+    """状态标签：由自身年内位置/动量/量能确定，规则写进 method。"""
     location = to_float(row.get("year_loc"))
     ret5 = to_float(row.get("ret_5d")) or 0.0
     ret20 = to_float(row.get("ret_20d")) or 0.0
-    relative = to_float(row.get("relative_20d")) or 0.0
     vs_ma20 = to_float(row.get("vs_ma20")) or 0.0
     volume_ratio = to_float(row.get("volume_ratio_5d")) or 0.0
     if location is not None and location >= 0.85 and (vs_ma20 >= 0.04 or ret20 >= 0.12):
         return "crowded"
     if ret20 >= 0.05 and ret5 < 0:
         return "cooling"
-    if relative > 0.03 and ret5 > 0 and row.get("close_above_ma20"):
+    if ret20 > 0.03 and ret5 > 0 and row.get("close_above_ma20"):
         return "hot"
-    if ret5 > 0 and (relative > 0 or volume_ratio >= 1.2):
+    if ret5 > 0 and (ret20 > 0 or volume_ratio >= 1.2):
         return "warming"
-    if relative < -0.02 and ret5 < 0:
+    if ret20 < -0.02 and ret5 < 0:
         return "fading"
     return "neutral"
 
@@ -1045,7 +1044,6 @@ def spark_series(bars: Sequence[Mapping[str, Any]], length: int = 20) -> list[fl
 def analyze_hotspot_row(
     entity: Mapping[str, Any],
     bars: Sequence[Mapping[str, Any]],
-    benchmark_ret20: float | None,
     quote: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     """单只代表 ETF 的热点行（含热度/状态/证据句/spark）。"""
@@ -1100,7 +1098,6 @@ def analyze_hotspot_row(
             value for value in (to_float(bar.get("high")) for bar in bars[-21:-1]) if value is not None
         )
         breakout = closes[-1] >= previous_high
-    relative = ret20 - benchmark_ret20 if ret20 is not None and benchmark_ret20 is not None else None
     row = {
         **base,
         "price": base["price"] if base["price"] is not None else closes[-1],
@@ -1108,7 +1105,7 @@ def analyze_hotspot_row(
         "ret_1d": ret1,
         "ret_5d": ret5,
         "ret_20d": ret20,
-        "relative_20d": relative,
+        "relative_20d": None,  # Deprecated compatibility field; never used in decisions.
         "ma20": ma20,
         "ma60": ma60,
         "vs_ma20": pct_change(closes[-1], ma20),
@@ -1126,8 +1123,6 @@ def analyze_hotspot_row(
     evidence: list[str] = []
     if ret20 is not None:
         evidence.append(f"20日 {ret20:+.1%}")
-    if relative is not None:
-        evidence.append(f"相对沪深300 {relative:+.1%}")
     if volume_ratio is not None:
         evidence.append(f"5日量能 {volume_ratio:.2f}x")
     if breakout:
@@ -1171,9 +1166,9 @@ def market_state(rows: Sequence[Mapping[str, Any]], counts: Mapping[str, int]) -
     if crowded >= max(3, total * 0.25):
         return "高位分化", "热点仍多，但高位拥挤占比上升；优先辨认承接，而不是追逐涨幅。"
     if strong >= max(4, total * 0.35):
-        return "热点扩散", "多个方向同时升温；观察相对强度和量能能否连续，而不是只看单日涨幅。"
+        return "热点扩散", "多个方向同时升温；观察自身动量和量能能否连续，而不是只看单日涨幅。"
     if fading >= max(3, total * 0.25):
-        return "退潮占优", "弱势方向增多；反弹需要先看到相对沪深300 重新转正。"
+        return "退潮占优", "弱势方向增多；逐只观察自身20日动量与量能是否改善。"
     return "结构性轮动", "热点集中在少数方向；没有足够证据说明全面扩散。"
 
 
@@ -1259,7 +1254,7 @@ def select_largest_csi300(
     quotes: Mapping[str, Mapping[str, Any]],
     fallback: str | None = None,
 ) -> str:
-    """按总市值选出最大的沪深300 ETF 作为基准。"""
+    """按总市值选择沪深300 ETF，仅用于独立份额监测，不参与其他ETF信号或排名。"""
     candidates = [
         code
         for code in config.CSI300_CANDIDATES

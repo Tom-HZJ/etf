@@ -21,9 +21,9 @@ class ResearchTests(unittest.TestCase):
     def test_incomplete_daily_is_excluded_and_future_data_does_not_change_result(self):
         data=bars([100+i*.1 for i in range(80)])
         cutoff=data[-2]['date']; benchmark={'date':cutoff,'state':'supportive'}
-        before=research.screen(E,data[:-1],benchmark,cutoff)
+        before=research.screen(E,data[:-1],cutoff)
         data[-1].update(close=99999,high=100000)
-        self.assertEqual(before,research.screen(E,data,benchmark,cutoff))
+        self.assertEqual(before,research.screen(E,data,cutoff))
 
     def test_cutoff_is_shanghai_1510_policy_not_utc(self):
         self.assertEqual(research.completed_cutoff(datetime.fromisoformat('2026-11-09T07:09:59+00:00')),'2026-11-08')
@@ -31,27 +31,26 @@ class ResearchTests(unittest.TestCase):
 
     def test_invalid_ohlc_stops_screen(self):
         data=bars([100+i*.1 for i in range(80)]); data[-2]['low']=999
-        self.assertEqual(research.screen(E,data,{'date':data[-1]['date'],'state':'supportive'},'2099-01-01')['phase'],'invalid_data')
+        self.assertEqual(research.screen(E,data,'2099-01-01')['phase'],'invalid_data')
 
-    def test_date_mismatch_and_crossborder_are_not_candidates(self):
+    def test_crossborder_still_requires_separate_rules(self):
         data=bars([100+i*.1 for i in range(80)])
-        self.assertEqual(research.screen(E,data,{'date':'2020-01-01'},'2099-01-01')['phase'],'stale')
-        self.assertEqual(research.screen({'code':'sh513100','name':'纳指ETF'},data,{},'2099-01-01')['phase'],'separate_rules')
+        self.assertEqual(research.screen({'code':'sh513100','name':'纳指ETF'},data,'2099-01-01')['phase'],'separate_rules')
 
     def test_heat_does_not_change_entry_geometry(self):
         data=bars([100+i*.1 for i in range(80)]); b={'date':data[-1]['date'],'state':'supportive'}
-        low=research.screen(E,data,b,'2099-01-01',10); high=research.screen(E,data,b,'2099-01-01',99)
+        low=research.screen(E,data,'2099-01-01',10); high=research.screen(E,data,'2099-01-01',99)
         low.pop('heat'); high.pop('heat'); self.assertEqual(low,high)
 
     def test_first_trigger_is_next_session_only_and_does_not_repeat(self):
         prices=[100+i*.04 for i in range(70)]+[102.4,102.45,102.7]
         data=bars(prices)
         for row in data: row.update(high=row['close']+.1,low=row['close']-.1)
-        def check(d,state='supportive'):
-            return research.screen(E,d,{'date':d[-1]['date'],'state':state,'_states':{r['date']:'supportive' for r in d}},d[-1]['date'])
+        def check(d):
+            return research.screen(E,d,d[-1]['date'])
         self.assertEqual(check(data[:-1])['phase'],'preparing')
         first=check(data); self.assertTrue(first['eligible']); self.assertEqual(first['phase'],'triggered')
-        self.assertEqual(check(data,'cautious')['phase'],'market_caution')
+        self.assertFalse(first['external_reference_required'])
         next_row={**data[-1],'date':'2026-03-15','close':102.71,'open':102.71,'high':102.81,'low':102.61}
         following=check(data+[next_row])
         self.assertFalse(following['eligible']); self.assertEqual(following['last_signal_date'],first['trigger_date'])

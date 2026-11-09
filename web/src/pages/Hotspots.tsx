@@ -65,7 +65,6 @@ function RankTable({ rows }: { rows: HotspotRow[] }): React.JSX.Element {
             <th className="r">1日</th>
             <th className="r">5日</th>
             <th className="r">20日</th>
-            <th className="r">相对300</th>
             <th className="r">量能</th>
             <th className="r">年内位置</th>
             <th className="w-[92px]">20日</th>
@@ -99,7 +98,6 @@ function RankTable({ rows }: { rows: HotspotRow[] }): React.JSX.Element {
               <td className={`num r ${deltaClass(row.ret_1d)}`}>{fmtPct(row.ret_1d)}</td>
               <td className={`num r ${deltaClass(row.ret_5d)}`}>{fmtPct(row.ret_5d)}</td>
               <td className={`num r ${deltaClass(row.ret_20d)}`}>{fmtPct(row.ret_20d)}</td>
-              <td className={`num r ${deltaClass(row.relative_20d)}`}>{fmtPct(row.relative_20d)}</td>
               <td className="num r text-[var(--etf-muted)]">
                 {row.volume_ratio_5d === null ? '—' : `${row.volume_ratio_5d.toFixed(2)}x`}
               </td>
@@ -147,15 +145,12 @@ function RankCards({ rows }: { rows: HotspotRow[] }): React.JSX.Element {
               <div className="mt-1.5">
                 <HeatBar value={row.heat} hot={row.state === 'hot'} />
               </div>
-              <div className="mt-2 grid grid-cols-4 gap-2 text-[10px] text-[var(--etf-faint)]">
+              <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-[var(--etf-faint)]">
                 <span>
                   5日 <span className={`num block ${deltaClass(row.ret_5d)}`}>{fmtPct(row.ret_5d)}</span>
                 </span>
                 <span>
                   20日 <span className={`num block ${deltaClass(row.ret_20d)}`}>{fmtPct(row.ret_20d)}</span>
-                </span>
-                <span>
-                  相对 <span className={`num block ${deltaClass(row.relative_20d)}`}>{fmtPct(row.relative_20d)}</span>
                 </span>
                 <span>
                   量能 <span className="num block text-[var(--etf-ink-2)]">{row.volume_ratio_5d?.toFixed(2) ?? '—'}x</span>
@@ -397,7 +392,7 @@ export function HotspotsPage({
                   </button>
                 ))}
               </div>
-              <span className="mono ml-auto text-[8.5px] text-[var(--etf-faint)]">相对基准：沪深300ETF</span>
+              <span className="mono ml-auto text-[8.5px] text-[var(--etf-faint)]">逐只按自身走势排序</span>
             </div>
             <RankTable rows={visibleRows} />
             <RankCards rows={visibleRows} />

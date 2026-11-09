@@ -5,7 +5,6 @@ import type { ResearchRow } from "../api/research";
 import { useResource } from "../lib/hooks";
 import type { ThemeMode } from '../lib/hooks';
 import { ErrorPanel, PanelSkeleton } from "../components/States";
-import { UniversePanel } from '../components/UniversePanel';
 import { EvaluationPanel } from '../components/EvaluationPanel';
 const EmbeddedMarket = lazy(()=>import('./Market').then(module=>({default:module.MarketPage})));
 const PHASES: Record<string, string> = {
@@ -15,7 +14,6 @@ const PHASES: Record<string, string> = {
   await_pullback: "趋势成立 · 等回踩",
   extended: "偏离过大 · 不追认",
   no_trend: "趋势尚未成立",
-  market_caution: "基准偏谨慎",
   separate_rules: "需独立规则",
   insufficient: "数据不足",
   stale: "数据待补齐",
@@ -34,7 +32,7 @@ function groupFor(row:ResearchRow):Filter {
   if (['insufficient','history_short','invalid_data','stale','refreshing_data'].includes(row.phase)) return 'data';
   if (['extended','risk_wide','separate_rules','expired'].includes(row.phase)) return 'paused';
   if (row.eligible || row.prealert || row.phase==='tracking') return 'focus';
-  if (['no_trend','await_setup','await_trigger','await_pullback','market_caution'].includes(row.phase)) return 'waiting';
+  if (['no_trend','await_setup','await_trigger','await_pullback'].includes(row.phase)) return 'waiting';
   return 'data';
 }
 const price = (v: number | null | undefined): string =>
@@ -151,7 +149,7 @@ export function ResearchPage({
           <div className="eyebrow">SWING RESEARCH · 数天至数周</div>
           <h1>确认趋势，再等位置。</h1>
           <p>
-            先看到准备结构，再核对突破或回踩转强。预警帮助提前观察，完整确认仍须通过位置与大盘条件。
+            先看到准备结构，再核对突破或回踩转强。预警帮助提前观察，完整确认只核对该ETF自身趋势、位置与风险条件。
           </p>
           {data ? (
             <div id="research-status" role="status">
@@ -159,8 +157,8 @@ export function ResearchPage({
               {data.data_stale
                 ? "数据待补齐，已暂停候选判断"
                 : "历史数据重算 · 研究假设"}{" "}
-              · {data.benchmark.source ?? "—"} · 最近采集{" "}
-              {data.benchmark.updated_at ?? "—"}
+              · {data.sources.join(" / ") || "—"} · 最近采集{" "}
+              {data.latest_collected_at ?? "—"} · 独立规则 v3{data.stale_count ? ` · ${data.stale_count}只自身数据待更新` : ""}
             </div>
           ) : null}
         </header>
@@ -177,11 +175,9 @@ export function ResearchPage({
             <section className="research-summary" aria-label="日线研究概览">
               {[
                 [
-                  "现行规则参照 · 沪深300",
-                  data.benchmark.state === "supportive"
-                    ? "趋势支持"
-                    : "谨慎观察",
-                  data.benchmark.date ?? "暂无日线",
+                  "判断范围",
+                  "ETF自身",
+                  "不设沪深300或其他宽基门槛",
                 ],
                 [
                   "日线趋势方向",
@@ -210,7 +206,6 @@ export function ResearchPage({
               研究假设 ·
               尚未通过样本外收益验证。参考收盘不是成交价；实际开盘、滑点、费用、T+1和跳空风险需另行记录。
             </div>
-            <UniversePanel refreshTick={refreshTick} onOpen={openAsset}/>
             <div className="research-workspace">
               <section className="research-list">
                 <div className="research-tools">
@@ -308,7 +303,7 @@ export function ResearchPage({
         <details className="research-method">
           <summary>规则与数据口径</summary>
           <p>
-            固定沪深300基准，完整触发要求基准收盘 &gt; MA20 &gt; MA60且MA20向上。标的用收盘高于MA20、MA20较5日前向上作为较快条件，MA60保留为趋势背景。仅用15:10以后确认收盘的日线。分别研究首次20日通道突破和5个交易日内的回踩转强；只有当天完整条件通过才记录有效确认。准备预警不要求大盘已通过，也不是买入信号。早期价格事件不会提前消耗合法信号；下一交易日进入纸面观察。距离MA20超过1.5个ATR或到结构失效点超过2个ATR，暂停追认。阈值是待验证假设，不是最优参数。
+            每只ETF独立判断，不读取沪深300或其他宽基走势作为准入条件。标的用自身收盘高于MA20、MA20较5日前向上作为较快条件，MA60保留为趋势背景。仅用15:10以后确认收盘的日线。分别研究首次20日通道突破和5个交易日内的回踩转强；只有当天完整条件通过才记录有效确认。准备预警不是买入信号。早期价格事件不会提前消耗合法信号；下一交易日进入纸面观察。距离MA20超过1.5个ATR或到结构失效点超过2个ATR，暂停追认。阈值是待验证假设，不是最优参数。
           </p>
           <p>
             跨境与商品ETF分开处理。当前页面是按现有历史数据重算；部署后的日终采集追加带真实记录时间的观察档案，不补造历史“当时已知”信号。不接交易账户、不自动下单。不使用最新份额反推的国家队合成K线来评估入场。尚无独立交易所假日日历，缺完整基准日线时保守暂停。

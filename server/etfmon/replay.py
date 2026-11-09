@@ -15,6 +15,7 @@ NOTES=['历史回算，不是当时实发信号；年初空仓，单标的单仓
        '开盘先检验此前已知的MA20、ATR和失效线；跳空超界取消开仓，不把信号收盘价当成交价',
        '退出依次检查结构失效、2ATR跟踪线、连续两日低于MA20、5日无延续、20日复核；确认后次日开盘参考',
        '无盘中止损模拟；跳空、涨跌停、停牌、滑点和最低佣金可能使实际结果更差',
+       '独立判断：只使用该ETF自身价格、均线和ATR；不读取宽基走势作为准入条件；缺失日线不补造，按实际可用交易记录回放',
        '当前基金池和当前前复权历史，存在幸存者及复权口径偏差，未经独立样本外验证']
 
 def simulate(bars,contexts,events,year,cost_bps=20):
@@ -81,37 +82,30 @@ def _build(code,path,cutoff,cost_bps,moment):
     raw=store.load_bars(code)
     all_bars,_=research.clean_bars(raw,completed)
     data,bad=research.clean_bars(raw,requested)
-    bench,bad_bench=research.clean_bars(store.load_bars('sh000300'),requested)
     result={'code':code,'name':config.entity_name(code),'year':year,'requested_cutoff':requested,'as_of':None,'generated_at':store.iso_now(),
-            'rule_version':VERSION,'path':path,'cost_bps':cost_bps,'state':'insufficient','signals':[],'executions':[],'trades':[],
+            'rule_version':VERSION,'decision_scope':'self_only','external_reference_required':False,'path':path,'cost_bps':cost_bps,'state':'insufficient','signals':[],'executions':[],'trades':[],
             'cancelled':[],'position':None,'pending':None,'equity_curve':[],'summary':{},'notes':NOTES,
             'available_dates':[r['date'] for r in all_bars if r['date'].startswith(str(year))],
             'source':{k:store.load_bars_payload(code).get(k) for k in ['source','updated_at','adjustment']}}
     if not config.is_etf_code(code):return {**result,'state':'unsupported','message':'当前进出规则仅研究境内股票ETF，不直接套用个股和指数'}
-    if bad or bad_bench:return {**result,'state':'invalid_data','message':'日线异常，已暂停进出点计算，后台会检查补数'}
-    if not data or not bench:return {**result,'message':'尚无完整标的或基准日线'}
-    common=min(data[-1]['date'],bench[-1]['date']);data=[r for r in data if r['date']<=common];bench=[r for r in bench if r['date']<=common]
-    if not data or len(bench)<65 or len(data)<65:return {**result,'as_of':common,'message':'计算准备和进出条件至少需要65根完整日线，不补造上市前价格'}
-    expected=[r['date'] for r in bench if r['date']>=max(data[0]['date'],f'{year}-01-01')]
-    absent=sorted(set(expected)-{r['date'] for r in data})
-    if absent:return {**result,'as_of':common,'message':'年内交易日有缺口，暂停回放，等待后台补数','missing_dates':absent}
-    regime=research.market_regime(bench,common)
-    regime['_states']={r['date']:'supportive' if c['strong'] else 'cautious' for r,c in zip(bench,research._contexts(bench))}
+    if bad:return {**result,'state':'invalid_data','message':'日线异常，已暂停进出点计算，后台会检查补数'}
+    if not data:return {**result,'message':'尚无该ETF的完整日线'}
+    common=data[-1]['date']
+    if len(data)<65:return {**result,'as_of':common,'message':'计算准备和进出条件至少需要65根完整日线，不补造上市前价格'}
     entity=config.ENTITIES.get(code);info={'code':code,'name':config.entity_name(code),'group':getattr(entity,'group',''),'direction':getattr(entity,'direction','')}
-    screened=research.screen(info,data,regime,common,collect_events=True)
+    screened=research.screen(info,data,common,collect_events=True)
     if screened['phase']=='separate_rules':return {**result,'as_of':common,'state':'unsupported','message':screened['reason']}
     events=[e for e in screened.get('events',[]) if path=='combined' or e['path']==path]
     model=simulate(data,research._contexts(data),events,year,cost_bps)
     event_dates={e['date'] for e in events if e['date'].startswith(str(year))}
     buy_dates={s['date'] for s in model['signals'] if s['side']=='buy'}
-    benchmark_year=[(r,c) for r,c in zip(bench,research._contexts(bench)) if r['date'].startswith(str(year))]
     diagnostics={'qualified_buy_dates':len(event_dates),'buy_confirmations':len(buy_dates),
                  'buy_references':sum(f['side']=='buy' for f in model['executions']),
                  'sell_references':sum(f['side']=='sell' for f in model['executions']),
                  'entry_cancellations':len(model['cancelled']),
                  'ignored_while_holding':len(event_dates-buy_dates),
-                 'benchmark_supportive_days':sum(c['strong'] for _,c in benchmark_year),
-                 'benchmark_sessions':len(benchmark_year)}
+                 'decision_scope':'self_only',
+                 'own_sessions':sum(r['date'].startswith(str(year)) for r in data)}
     return {**result,**model,'as_of':common,'state':'research_only','current_phase':screened['phase'],
             'diagnostics':diagnostics,
             'current_reason':screened['reason'],'current_prealert':screened['prealert'],
@@ -126,7 +120,7 @@ def build_payload(code,path='combined',cutoff=None,cost_bps=20,moment=None):
         if cutoff>limit or cutoff[:4]!=str(moment.astimezone(config.SHANGHAI_TZ).year):raise ValueError('回放日期须为今年已完成的交易日范围')
     def fingerprint():
         stamps=[]
-        for symbol in (code,'sh000300'):
+        for symbol in (code,):
             p=store.bars_path(symbol)
             try:s=p.stat();stamps.append((s.st_mtime_ns,s.st_size))
             except OSError:stamps.append(None)

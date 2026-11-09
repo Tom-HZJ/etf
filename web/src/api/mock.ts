@@ -592,7 +592,7 @@ function resample(bars: Bar[], span: Span): Bar[] {
 }
 
 function heatScore(row: {
-  relative_20d: number | null;
+  ret_20d: number | null;
   ret_5d: number | null;
   close_above_ma20: boolean;
   ma20_above_ma60: boolean;
@@ -600,12 +600,12 @@ function heatScore(row: {
   breakout_20d: boolean;
 }): number {
   const clip = (value: number) => clamp(value, 0, 1);
-  const relative = clip(((row.relative_20d ?? 0) + 0.15) / 0.3);
+  const ownMomentum = clip(((row.ret_20d ?? 0) + 0.15) / 0.3);
   const momentum = clip(((row.ret_5d ?? 0) + 0.1) / 0.2);
   const trend = (row.close_above_ma20 ? 0.5 : 0) + (row.ma20_above_ma60 ? 0.5 : 0);
   const volume = clip(((row.volume_ratio_5d ?? 0.8) - 0.8) / 1.2);
   const breakout = row.breakout_20d ? 1 : 0;
-  return Math.round(clip(40 * relative + 20 * momentum + 20 * trend + 15 * volume + 5 * breakout) * 100);
+  return Math.round(clamp(40 * ownMomentum + 20 * momentum + 20 * trend + 15 * volume + 5 * breakout, 0, 100));
 }
 
 const STATE_LABEL: Record<HotState, string> = {
@@ -622,7 +622,6 @@ function hotState(row: {
   year_loc: number | null;
   ret_5d: number | null;
   ret_20d: number | null;
-  relative_20d: number | null;
   vs_ma20: number | null;
   volume_ratio_5d: number | null;
   close_above_ma20: boolean;
@@ -630,25 +629,22 @@ function hotState(row: {
   const yearLoc = row.year_loc ?? 0;
   const ret5 = row.ret_5d ?? 0;
   const ret20 = row.ret_20d ?? 0;
-  const relative = row.relative_20d ?? 0;
   const vsMa20 = row.vs_ma20 ?? 0;
   const volumeRatio = row.volume_ratio_5d ?? 0;
 
   if (yearLoc >= 0.85 && (vsMa20 >= 0.04 || ret20 >= 0.12)) return 'crowded';
   if (ret20 >= 0.05 && ret5 < 0) return 'cooling';
-  if (relative > 0.03 && ret5 > 0 && row.close_above_ma20) return 'hot';
-  if (ret5 > 0 && (relative > 0 || volumeRatio >= 1.2)) return 'warming';
-  if (relative < -0.02 && ret5 < 0) return 'fading';
+  if (ret20 > 0.03 && ret5 > 0 && row.close_above_ma20) return 'hot';
+  if (ret5 > 0 && (ret20 > 0 || volumeRatio >= 1.2)) return 'warming';
+  if (ret20 < -0.02 && ret5 < 0) return 'fading';
   return 'neutral';
 }
 
 function buildHotspotRows(snapshot: {
   series: Map<string, Series>;
   finalIndex: number;
-  benchmark: Series;
 }): HotspotRow[] {
-  const { series, finalIndex, benchmark } = snapshot;
-  const benchRet20 = benchmark.closes[finalIndex] / benchmark.closes[finalIndex - 20] - 1;
+  const { series, finalIndex } = snapshot;
   const rows: HotspotRow[] = [];
 
   for (const seed of HOT_SEEDS) {
@@ -670,13 +666,12 @@ function buildHotspotRows(snapshot: {
     const yearBars = data.bars.slice(0, finalIndex + 1);
     const yearHigh = Math.max(...yearBars.map((bar) => bar.high));
     const yearLow = Math.min(...yearBars.map((bar) => bar.low));
-    const relative = ret20 - benchRet20;
 
     const base = {
       ret_1d: round(ret1, 5),
       ret_5d: round(ret5, 5),
       ret_20d: round(ret20, 5),
-      relative_20d: round(relative, 5),
+      relative_20d: null,
       close_above_ma20: price > ma20,
       ma20_above_ma60: ma20 > ma60,
       volume_ratio_5d: volumeRatio === null ? null : round(volumeRatio, 3),
@@ -699,7 +694,7 @@ function buildHotspotRows(snapshot: {
       ret_1d: base.ret_1d,
       ret_5d: base.ret_5d,
       ret_20d: base.ret_20d,
-      relative_20d: base.relative_20d,
+      relative_20d: null,
       ma20: round(ma20, 3),
       ma60: round(ma60, 3),
       vs_ma20: base.vs_ma20,
@@ -732,14 +727,13 @@ function buildHotspotRows(snapshot: {
     const idx = finalIndex - 5;
     const price = data.closes[idx];
     const ret20 = price / data.closes[idx - 20] - 1;
-    const bench = benchmark.closes[idx] / benchmark.closes[idx - 20] - 1;
     const ma20 = avg(data.closes.slice(idx - 19, idx + 1));
     const ma60 = avg(data.closes.slice(idx - 59, idx + 1));
     const volume5 = avg(data.volumes.slice(idx - 4, idx + 1));
     const volume20 = avg(data.volumes.slice(idx - 19, idx + 1));
     const high20 = Math.max(...data.bars.slice(idx - 20, idx).map((bar) => bar.high));
     const score = heatScore({
-      relative_20d: ret20 - bench,
+      ret_20d: ret20,
       ret_5d: price / data.closes[idx - 5] - 1,
       close_above_ma20: price > ma20,
       ma20_above_ma60: ma20 > ma60,
@@ -756,7 +750,6 @@ function buildHotspotRows(snapshot: {
     row.rank_change_5d = pastRank === undefined ? null : pastRank - row.rank;
     const evidence: string[] = [];
     if (row.ret_20d !== null) evidence.push(`20日 ${(row.ret_20d * 100).toFixed(1)}%`);
-    if (row.relative_20d !== null) evidence.push(`相对沪深300 ${(row.relative_20d * 100).toFixed(1)}%`);
     if (row.volume_ratio_5d !== null) evidence.push(`5日量能 ${row.volume_ratio_5d.toFixed(2)}x`);
     if (row.breakout_20d) evidence.push('站上20日高点');
     if (row.year_loc !== null) evidence.push(`年内位置 ${Math.round(row.year_loc * 100)}%`);
@@ -975,7 +968,7 @@ function buildSnapshot(): Snapshot {
     { date: '2026-09-30', net: 52.1, net_pct: 0.005, large_redemption: false, funds: 26, label: '2026Q3' },
   ];
 
-  const hotspots = buildHotspotsResponse({ series, finalIndex, benchmark: series.get('sh510300')!, quotes, history, shares, flowYi, flowPeriods, days });
+  const hotspots = buildHotspotsResponse({ series, finalIndex, quotes, history, shares, flowYi, flowPeriods, days });
 
   const csi300Series = series.get('sh510300')!;
   const csi300Shares = shares.get('sh510300')!;
@@ -1067,7 +1060,7 @@ function buildSnapshot(): Snapshot {
     })(),
     definitions: {
       net_flow: '相邻交易日总份额差 × 当日价格，单位亿元；正数为净申购代理，不代表申赎主体。',
-      heat: '相对沪深300 40 + 5日动量 20 + MA趋势 20 + 5日量能 15 + 20日新高 5；只用于排序。',
+      heat: '自身20日动量40 + 5日动量 20 + MA趋势 20 + 5日量能 15 + 20日新高 5；只用于排序。',
       trend: '收盘离开极值 10% 才确认转折；未确认的那一段仍标记为「左边」。',
       breadth: '以 42 只行业/主题代表 ETF 计数，不等于全市场涨跌家数。',
     },
@@ -1114,7 +1107,6 @@ function buildSnapshot(): Snapshot {
 function buildHotspotsResponse(input: {
   series: Map<string, Series>;
   finalIndex: number;
-  benchmark: Series;
   quotes: Map<string, Quote>;
   history: TeamDay[];
   shares: Map<string, number[]>;
@@ -1150,10 +1142,10 @@ function buildHotspotsResponse(input: {
     headline = '热点仍多，但高位拥挤占比上升；优先辨认承接，而不是追逐涨幅。';
   } else if (strong >= Math.max(8, Math.round(usable.length * 0.3))) {
     state = '热点扩散';
-    headline = '多个方向同时升温；观察相对强度和量能能否连续，而不是只看单日涨幅。';
+    headline = '多个方向同时升温；观察自身动量和量能能否连续，而不是只看单日涨幅。';
   } else if (fading > strong) {
     state = '退潮占优';
-    headline = '弱势方向增多；反弹需要先看到相对沪深300 重新转正。';
+    headline = '弱势方向增多；逐只观察自身20日动量与量能是否改善。';
   } else {
     state = '结构性轮动';
     headline = '热点集中在少数方向；没有足够证据说明全面扩散。';
@@ -1199,7 +1191,7 @@ function buildHotspotsResponse(input: {
     as_of: FINAL_DATE,
     market_data_to: FINAL_DATE,
     version: 'hotspot-20261106',
-    rule: '相对沪深300 40 + 5日动量 20 + MA趋势 20 + 5日量能 15 + 20日新高 5',
+    rule: '自身20日动量40 + 5日动量 20 + MA趋势 20 + 5日量能 15 + 20日新高 5',
     state,
     headline,
     counts,
@@ -1229,12 +1221,12 @@ function buildHotspotsResponse(input: {
     },
     warnings: [],
     method: {
-      universe: '42 只行业 / 主题代表 ETF；宽基只做基准，不参与排行。',
-      benchmark: '沪深300ETF华泰柏瑞（510300），按份额挑选最大沪深300 ETF。',
+      universe: '42 只行业 / 主题代表 ETF；各ETF独立按自身走势排序。',
+      decision_scope: 'ETF自身走势，无宽基条件。',
       states: '强势 / 升温 / 高位拥挤 / 高位降温 / 退潮 / 盘整 / 数据不足。',
     },
     limitations: [
-      '热度是相对强度与动量的排序，不是收益预测，也不是买卖建议。',
+      '热度是自身动量与量能的排序，不是收益预测，也不是买卖建议。',
       '代表 ETF 的选择带有主观性；同一方向内部成分差异可能很大。',
       '未接入新闻、政策、资金流细项和成分股基本面。',
     ],

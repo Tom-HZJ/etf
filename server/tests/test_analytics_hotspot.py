@@ -36,7 +36,7 @@ def uptrend_bars(count: int = 70, start: float = 1.0, step: float = 0.01) -> lis
 class HeatScoreTest(unittest.TestCase):
     def test_bounds(self) -> None:
         strong = {
-            "relative_20d": 0.20,
+            "ret_20d": 0.20,
             "ret_5d": 0.10,
             "close_above_ma20": True,
             "ma20_above_ma60": True,
@@ -44,7 +44,7 @@ class HeatScoreTest(unittest.TestCase):
             "breakout_20d": True,
         }
         weak = {
-            "relative_20d": -0.20,
+            "ret_20d": -0.20,
             "ret_5d": -0.10,
             "close_above_ma20": False,
             "ma20_above_ma60": False,
@@ -59,9 +59,9 @@ class HeatScoreTest(unittest.TestCase):
             self.assertGreaterEqual(score, 0)
             self.assertLessEqual(score, 100)
 
-    def test_missing_relative_caps_score(self) -> None:
+    def test_missing_own_momentum_caps_score(self) -> None:
         row = {
-            "relative_20d": None,
+            "ret_20d": None,
             "ret_5d": 0.2,
             "close_above_ma20": True,
             "ma20_above_ma60": True,
@@ -77,12 +77,12 @@ class HotStateTest(unittest.TestCase):
         self.assertEqual(analytics.hot_state({"ret_20d": 0.06, "ret_5d": -0.01}), "cooling")
         self.assertEqual(
             analytics.hot_state(
-                {"relative_20d": 0.05, "ret_5d": 0.01, "close_above_ma20": True}
+                {"ret_20d": 0.05, "ret_5d": 0.01, "close_above_ma20": True}
             ),
             "hot",
         )
-        self.assertEqual(analytics.hot_state({"relative_20d": 0.0, "ret_5d": 0.01, "volume_ratio_5d": 1.3}), "warming")
-        self.assertEqual(analytics.hot_state({"relative_20d": -0.03, "ret_5d": -0.01}), "fading")
+        self.assertEqual(analytics.hot_state({"ret_20d": 0.0, "ret_5d": 0.01, "volume_ratio_5d": 1.3}), "warming")
+        self.assertEqual(analytics.hot_state({"ret_20d": -0.03, "ret_5d": -0.01}), "fading")
         self.assertEqual(analytics.hot_state({}), "neutral")
 
     def test_state_labels_complete(self) -> None:
@@ -103,7 +103,7 @@ class SparkTest(unittest.TestCase):
 
 class AnalyzeRowTest(unittest.TestCase):
     def test_unavailable_when_short_history(self) -> None:
-        row = analytics.analyze_hotspot_row(ENTITY, bars_from_closes([1.0] * 10), 0.0, {})
+        row = analytics.analyze_hotspot_row(ENTITY, bars_from_closes([1.0] * 10), {})
         self.assertEqual(row["state"], "unavailable")
         self.assertEqual(row["heat"], 0)
         self.assertIsNone(row["ret_20d"])
@@ -111,11 +111,11 @@ class AnalyzeRowTest(unittest.TestCase):
 
     def test_uptrend_metrics(self) -> None:
         bars = uptrend_bars()
-        row = analytics.analyze_hotspot_row(ENTITY, bars, 0.0, {"price": 1.8, "change_pct": 0.02})
+        row = analytics.analyze_hotspot_row(ENTITY, bars, {"price": 1.8, "change_pct": 0.02})
         self.assertEqual(row["code"], "sh512480")
         self.assertEqual(row["direction"], "半导体")
         self.assertGreater(row["ret_20d"], 0)
-        self.assertGreater(row["relative_20d"], 0)
+        self.assertGreater(row["ret_20d"], 0)
         self.assertTrue(row["close_above_ma20"])
         self.assertTrue(row["ma20_above_ma60"])
         self.assertTrue(row["breakout_20d"])
@@ -123,11 +123,11 @@ class AnalyzeRowTest(unittest.TestCase):
         self.assertIn(row["state"], {"hot", "crowded"})
         self.assertEqual(row["heat"], max(row["heat"], 1))
         self.assertEqual(len(row["spark"]), 20)
-        self.assertTrue(any("相对沪深300" in item for item in row["evidence"]))
+        self.assertFalse(any("沪深300" in item for item in row["evidence"]))
 
     def test_quote_fills_price(self) -> None:
         bars = uptrend_bars()
-        row = analytics.analyze_hotspot_row(ENTITY, bars, 0.0, {"price": 9.9, "change_pct": 0.5, "name": "半导体ETF"})
+        row = analytics.analyze_hotspot_row(ENTITY, bars, {"price": 9.9, "change_pct": 0.5, "name": "半导体ETF"})
         self.assertEqual(row["price"], 9.9)
         self.assertEqual(row["change_pct"], 0.5)
         self.assertEqual(row["name"], "半导体ETF")
