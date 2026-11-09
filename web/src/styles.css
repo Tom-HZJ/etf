@@ -2597,3 +2597,36 @@ html[data-theme="light"] .mobilebar {
 .universe-name strong { text-decoration:underline; text-underline-offset:4px; }
 .universe-panel td.universe-explanation { max-width:260px; white-space:normal; text-align:left; }
 .universe-notes p { margin-top:8px; line-height:1.8; }
+.rally-panel{padding:22px;border:1px solid var(--etf-line);border-radius:12px;background:var(--etf-surface);margin:20px 0;color:var(--etf-ink-2);min-width:0}
+.rally-panel p{font-size:12px;line-height:1.7;color:var(--etf-muted);margin:12px 0}
+.rally-panel h2{font-size:17px;color:var(--etf-ink);font-weight:600}
+.rally-panel h3{font-size:15px;color:var(--etf-ink);margin:20px 0 8px;font-weight:600}
+.rally-panel strong{color:var(--etf-ink)}
+.rally-panel details{padding:14px 0;border-top:1px solid var(--etf-line);margin-top:16px}
+.rally-panel summary{cursor:pointer;padding:9px 0;font-size:13px;color:var(--etf-ink-2)}
+.rally-caution{border-left:2px solid var(--etf-gold);padding-left:12px}
+.rally-tabs,.rally-phase-nav{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:16px 0}
+.rally-tabs button[aria-pressed=true]{border-color:var(--etf-gold);color:var(--etf-gold);background:var(--etf-surface-2)}
+.rally-turns{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:18px 0}
+.rally-turns>div{border:1px solid var(--etf-line);border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:8px}
+.rally-turns strong{color:var(--etf-gold);font-size:13px}
+.rally-turns b{font-size:24px;font-variant-numeric:tabular-nums;color:var(--etf-ink)}
+.rally-turns span,.rally-turns small{font-size:11px;line-height:1.6;color:var(--etf-muted)}
+.rally-panel caption{text-align:left;padding:12px 0;font-size:12px;color:var(--etf-muted)}
+.rally-panel .fund-table{min-width:680px}
+.rally-panel .fund-table td,.rally-panel .fund-table th{font-variant-numeric:tabular-nums}
+.rally-panel .universe-name{min-height:44px;text-align:left;padding:6px 0}
+.rally-phase-title{font-size:14px!important;color:var(--etf-ink-2)!important}
+.rally-phase-chart{border:1px solid var(--etf-line);border-radius:8px;padding:16px 12px;margin:16px 0}
+.rally-phase-chart .chart__legend{display:flex;gap:16px;flex-wrap:wrap}
+.rally-phase-chart svg{display:block;width:100%;height:auto;max-height:360px;margin-top:8px}
+.rally-phase-chart text{fill:var(--etf-muted);font-size:11px;font-family:inherit}
+.rally-phase-chart p{margin-bottom:0;font-size:11px}
+.rally-distribution{padding:18px;border:1px solid var(--etf-line);border-radius:8px;margin:18px 0}
+.rally-distribution-row{display:grid;grid-template-columns:180px 1fr 100px;align-items:center;gap:16px;margin-top:24px;font-size:12px}
+.rally-distribution-row small{display:block;color:var(--etf-muted);margin-top:5px}
+.rally-range-track{height:20px;position:relative;background:var(--etf-surface-2);border-radius:3px}
+.rally-range-track i{position:absolute;top:4px;height:12px;background:var(--etf-gold);opacity:.5;border-radius:2px}
+.rally-range-track b{position:absolute;top:1px;height:18px;width:3px;background:var(--etf-ink)}
+.rally-method p{font-size:11px}
+@media(max-width:640px){.rally-panel{padding:16px}.rally-turns{grid-template-columns:repeat(2,minmax(0,1fr))}.rally-distribution-row{grid-template-columns:100px 1fr 72px;gap:8px}.rally-turns>div{padding:12px}.rally-distribution{padding:12px}}

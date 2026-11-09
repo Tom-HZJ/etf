@@ -1,4 +1,5 @@
 import { chartRange } from '../lib/chartRange';
+import { RallyPanel } from '../components/RallyPanel';
 import { HoldingsPanel } from '../components/HoldingsPanel';
 import { useStrategyReplay,ReplayControls,ReplayDetails } from '../components/ReplayPanel';
 import type { ReplayView } from '../components/ReplayPanel';
@@ -52,7 +53,7 @@ type ChartPeriod = Span | MinutePeriod;
 type ChartPayload =
   | { kind: 'bars'; data: BarsResponse }
   | { kind: 'minute'; data: MinuteResponse };
-type RangeKey = 'ytd' | '1m' | '3m' | '6m' | '1y' | 'all';
+type RangeKey = 'ytd' | '1m' | '3m' | '6m' | '1y' | '3y' | 'all';
 
 const RANGES: { value: RangeKey; label: string; months: number | null }[] = [
   { value:'ytd', label:'今年以来', months:0 },
@@ -60,6 +61,7 @@ const RANGES: { value: RangeKey; label: string; months: number | null }[] = [
   { value: '3m', label: '近3月', months: 3 },
   { value: '6m', label: '近半年', months: 6 },
   { value: '1y', label: '近1年', months: 12 },
+  { value: '3y', label: '近3年', months: 36 },
   { value: 'all', label: '全部', months: null },
 ];
 
@@ -729,6 +731,7 @@ export function MarketPage({
           )}
 
           <ReplayDetails view={replay}/>
+          {(quote?.kind==='etf' || /^(sh5|sz1[56])/.test(selected)) ? <RallyPanel code={selected} refreshTick={refreshTick}/> : null}
 
           {(quote?.kind==='etf' || /^(sh5|sz1[56])/.test(selected)) ? <HoldingsPanel code={selected} refreshTick={refreshTick}/> : null}
 
