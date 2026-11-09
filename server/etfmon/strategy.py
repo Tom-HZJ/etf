@@ -30,14 +30,20 @@ def contexts(data):
 
 def scan(data,mode=ENTRY_MODE):
     if mode not in ('ma5_cross10','first_alignment','combined_alignment_pullback'):raise ValueError('Unknown entry mode')
-    cs=contexts(data);events=[];armed=None;fired=False;touch=None;last=None
+    cs=contexts(data);events=[];armed=None;fired=False;touch=None;last=None;watch=None;watch_expired=False
     for i in range(29,len(data)):
         row=data[i];c=cs[i];v=c['atr14'];ma=c['ma10'];today=[]
         if not v or not ma:continue
         # Episode state is bounded and is invalidated by the ETF's own structure.
-        if not c['fast']:armed=None;fired=False
+        if not c['fast']:
+            armed=None;fired=False
+            if cs[i-1]['fast']:watch=None;watch_expired=False
         elif armed is None and not fired and not cs[i-1]['fast']:armed=i
-        if armed is not None and i-armed>PARAMETERS['setup_lookback']:armed=None;fired=True
+        if armed is not None and i-armed>=PARAMETERS['setup_lookback']:armed=None;fired=True
+        near=(abs(c['ma5']-ma)<=.25*v and greater(c['ma5'],cs[i-1]['ma5']) and row['close']>=ma-.5*v and (row['close']-ma)/v<=1.5)
+        if not near:watch=None;watch_expired=False
+        elif watch is None and not watch_expired:watch=i
+        if watch is not None and i-watch>=PARAMETERS['setup_lookback']:watch=None;watch_expired=True
         if touch is not None and (i-touch>PARAMETERS['setup_lookback'] or not c['strong'] or row['close']<c['ma30']):touch=None
         if mode=='combined_alignment_pullback' and touch is None and c['strong'] and row['low']<=ma+.25*v and row['close']>=c['ma30'] and max(r['close'] for r in data[i-10:i])-row['low']>=v:
             touch=i
@@ -57,7 +63,9 @@ def scan(data,mode=ENTRY_MODE):
         if active and not pulled:
             if attempt('breakout',min(r['low'] for r in data[i-4:i+1]),armed if armed is not None else i):
                 fired=True;armed=None
+        if events and events[-1]['date']==row['date']:watch=None;watch_expired=True
         last={'date':row['date'],'armed_date':data[armed]['date'] if armed is not None else None,
+              'watch_date':data[watch]['date'] if watch is not None else None,
               'touch_date':data[touch]['date'] if touch is not None else None,'episode_consumed':fired,
               'today':today,'fast':c['fast'],'strong':c['strong']}
     return {'contexts':cs,'events':events,'state':last or {}}
