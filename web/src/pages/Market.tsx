@@ -1,6 +1,6 @@
 import { chartRange } from '../lib/chartRange';
 import { HoldingsPanel } from '../components/HoldingsPanel';
-import { useStrategyReplay,ReplayControls,ReplayDetails } from '../components/ReplayPanel';
+import { useStrategyReplay,ReplayControls,ReplayDetails,ReplayMarkerStatus } from '../components/ReplayPanel';
 import type { ReplayView } from '../components/ReplayPanel';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@astryxdesign/core/Button';
@@ -305,6 +305,7 @@ function DetailChart({
     : `${bars?.name ?? '—'} · 前复权 · ${bars?.bars.length ?? 0} 根 · ${bars?.span==='day'?'MA5/10/30':'MA20/60'}`;
   const rangeLabel = RANGES.find((item) => item.value === range)?.label ?? '全部';
   const plottedMarkers=useMemo(()=>bars?.span==='day'&&replay.markers!=='none'?(replay.markers==='signals'?replay.data?.signals:replay.data?.executions)?.map(point=>({...point,label:`${point.side==='buy'?'B':'S'}${replay.markers==='signals'?'确认':'开'}`})):undefined,[bars?.span,replay.data,replay.markers]);
+  const visibleDates=useMemo(()=>new Set(ranged?.bars.map(row=>row.date)??[]),[ranged]);
 
   return (
     <Panel
@@ -394,6 +395,7 @@ function DetailChart({
             : `${rangeLabel} · 可缩放 · 悬停看相对基准`}
         </span>
       </div>
+      <ReplayMarkerStatus view={replay} daily={!minute&&period==='day'} visibleDates={visibleDates} onDaily={()=>onPeriod('day')} onYear={()=>setRange('ytd')}/>
       {hasData ? (
         <div className="px-1 pb-1 pt-1">
           {minute && minutes ? (

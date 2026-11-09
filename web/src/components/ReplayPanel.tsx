@@ -3,9 +3,13 @@ import { fetchReplay } from '../api/replay';
 import { useDebounced,useResource } from '../lib/hooks';
 import { fmtPct,fmtPrice } from '../lib/format';
 import { Panel } from './Page';
+import { describeReplayMarkers,readReplayPreferences,saveReplayPreferences } from '../lib/replayDisplay';
+import type { ReplayPreferences } from '../lib/replayDisplay';
 export function useStrategyReplay(code:string,refreshTick:number){
- const [cutoff,setCutoff]=useState(''),[path,setPath]=useState('combined'),[cost,setCost]=useState(20),[markers,setMarkers]=useState('executions'),[playing,setPlaying]=useState(false);
- const [model,setModel]=useState('current');
+ const [initial]=useState(()=>{try{return readReplayPreferences(window.localStorage);}catch{return readReplayPreferences();}});
+ const [cutoff,setCutoff]=useState(''),[path,setPath]=useState<ReplayPreferences['path']>(initial.path),[cost,setCost]=useState<number>(initial.cost),[markers,setMarkers]=useState<ReplayPreferences['markers']>(initial.markers),[playing,setPlaying]=useState(false);
+ const [model,setModel]=useState<ReplayPreferences['model']>(initial.model);
+ useEffect(()=>{try{saveReplayPreferences(window.localStorage,{model,path,markers,cost:cost as ReplayPreferences['cost']});}catch{/* Private mode. */}},[model,path,markers,cost]);
  const delayed=useDebounced(cutoff,180);
  const resource=useResource(signal=>fetchReplay(code,path,delayed,cost,signal,model),[code,path,delayed,cost,refreshTick,model],{pollMs:60_000});
  const raw=resource.data;
@@ -25,9 +29,9 @@ export function ReplayControls({view,onDaily}:{view:ReplayView;onDaily:()=>void}
  return <div className="replay-controls">
   <div className="replay-heading"><strong>今年的买卖点 · 规则回放</strong><span>{data?.as_of?`计算截至 ${data.as_of}`:'正在检查历史数据'}</span></div>
   <div className="replay-actions">
-   <label>研究模型 <select className="fund-select" value={view.model} onChange={e=>{view.setPlaying(false);view.setModel(e.target.value);view.setPath('combined');onDaily();}}><option value="current">转强与阶段退出 v4</option><option value="legacy">旧规则 v3 对照</option></select></label>
-   {view.model==='legacy'?<label>旧版路径 <select className="fund-select" value={view.path} onChange={e=>{view.setPath(e.target.value);onDaily();}}><option value="combined">合并路径</option><option value="breakout">首次突破</option><option value="pullback">回踩转强</option></select></label>:null}
-   <label>标记 <select className="fund-select" value={view.markers} onChange={e=>{view.setMarkers(e.target.value);onDaily();}}><option value="executions">模拟开盘点</option><option value="signals">收盘确认点</option><option value="none">隐藏标记</option></select></label>
+   <label>研究模型 <select className="fund-select" value={view.model} onChange={e=>{view.setPlaying(false);view.setModel(e.target.value as ReplayPreferences['model']);view.setPath('combined');onDaily();}}><option value="current">转强与阶段退出 v4</option><option value="legacy">旧规则 v3 对照</option></select></label>
+   {view.model==='legacy'?<label>旧版路径 <select className="fund-select" value={view.path} onChange={e=>{view.setPath(e.target.value as ReplayPreferences['path']);onDaily();}}><option value="combined">合并路径</option><option value="breakout">首次突破</option><option value="pullback">回踩转强</option></select></label>:null}
+   <label>标记 <select className="fund-select" value={view.markers} onChange={e=>{view.setMarkers(e.target.value as ReplayPreferences['markers']);onDaily();}}><option value="executions">模拟开盘点</option><option value="signals">收盘确认点</option><option value="none">隐藏标记</option></select></label>
    <label>往返成本 <select className="fund-select" value={view.cost} onChange={e=>view.setCost(Number(e.target.value))}>{[0,10,20,40].map(v=><option key={v} value={v}>{v} 基点</option>)}</select></label>
    <button className="asset-back" disabled={!dates.length} onClick={()=>{onDaily();if(index===dates.length-1)view.setCutoff(dates[0]);view.setPlaying(!view.playing);}}>{view.playing?'暂停回放':'播放回放'}</button>
    <button className="asset-back" onClick={()=>{view.setPlaying(false);view.setCutoff('');onDaily();}}>回到最新</button>
@@ -36,6 +40,23 @@ export function ReplayControls({view,onDaily}:{view:ReplayView;onDaily:()=>void}
   <p>日K可选择近3年价格，B/S回放只计算今年；显示 MA5 / MA10 / MA30。{view.model==='current'?'v4用自身MA5/10首次转强确认、MA10位置与ATR风险；准备失效即重置，不设宽基门槛。':'旧v3保留当时MA20/60、回踩状态和退出逻辑，供同日期对照。'}</p>
   {view.model==='current'?<p>v4为研究模型，尚未通过样本外验证。B/S为规则确认点，不是交易指令。</p>:null}
   <p role="status">{view.resource.status==='error'?'策略暂不可用，稍后自动重试':view.resource.status==='loading'?'正在计算所选模型，暂不显示其他版本标记':data?.message??'正在读取策略'}。B/S 为收盘确认；B开/S开为次日开盘模拟参考。日K显示标记，未来价格留白。</p>
+ </div>;
+}
+export function ReplayMarkerStatus({view,daily,visibleDates,onDaily,onYear}:{view:ReplayView;daily:boolean;visibleDates:ReadonlySet<string>;onDaily:()=>void;onYear:()=>void}):React.JSX.Element{
+ const summary=describeReplayMarkers(view.data,{markers:view.markers,daily,visibleDates,status:view.resource.status});
+ const labels={show:'显示买卖标记',daily:'切换日K',retry:'重试买卖点',legacy:'查看旧版 v3 对照',signals:'查看收盘确认点',year:'查看今年以来'};
+ const act=()=>{
+  view.setPlaying(false);
+  if(summary.action==='show')view.setMarkers('executions');
+  if(summary.action==='legacy'){view.setModel('legacy');view.setPath('combined');}
+  if(summary.action==='signals')view.setMarkers('signals');
+  if(summary.action==='retry')view.resource.reload();
+  if(summary.action==='year')onYear();
+  if(summary.action!=='retry')onDaily();
+ };
+ return <div className="flex flex-wrap items-center gap-3 border-b border-[var(--etf-line)] px-4 py-3" aria-busy={summary.kind==='loading'}>
+  <p className="text-[12px] text-[var(--etf-muted)]" role="status">{summary.text}</p>
+  {summary.action?<button className="asset-back" onClick={act}>{labels[summary.action]}</button>:null}
  </div>;
 }
 export function ReplayDetails({view}:{view:ReplayView}):React.JSX.Element{
