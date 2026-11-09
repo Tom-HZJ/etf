@@ -21,6 +21,7 @@ export interface FlowMarker {
   label?: string;
 }
 export interface StrategyMarker {date:string;side:'buy'|'sell';price:number;label:string;reason:string}
+export interface MovingAverageLine {label:string;tone:'gold'|'cyan'|'violet';points:{date:string;value:number}[]}
 const EMPTY_FLOW:FlowMarker[]=[];
 const EMPTY_STRATEGY:StrategyMarker[]=[];
 const EMPTY_DATES:string[]=[];
@@ -35,6 +36,7 @@ const PALETTES = {
     border: '#1f2935',
     gold: '#d9b36a',
     cyan: '#7bd0e2',
+    violet:'#bba6ff',
     surface: '#0f151d',
     volumeUp: 'rgba(242,104,91,0.26)',
     volumeDown: 'rgba(53,196,155,0.26)',
@@ -48,6 +50,7 @@ const PALETTES = {
     border: '#dce3ea',
     gold: '#8a6520',
     cyan: '#13768b',
+    violet:'#7650b6',
     surface: '#ffffff',
     volumeUp: 'rgba(201,55,44,0.22)',
     volumeDown: 'rgba(8,121,95,0.22)',
@@ -79,6 +82,7 @@ export function KlineChart({
   bars,
   ma20,
   ma60,
+  movingAverages,
   markers = EMPTY_FLOW,
   strategyMarkers = EMPTY_STRATEGY,
   windowDates = EMPTY_DATES,
@@ -91,6 +95,7 @@ export function KlineChart({
   bars: Bar[];
   ma20: { date: string; value: number }[];
   ma60: { date: string; value: number }[];
+  movingAverages?:MovingAverageLine[];
   markers?: FlowMarker[];
   strategyMarkers?:StrategyMarker[];
   windowDates?:string[];
@@ -210,23 +215,11 @@ export function KlineChart({
       })) as HistogramData<Time>[],
     );
 
-    const ma20Series = chart.addSeries(LineSeries, {
-      color: palette.gold,
-      lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    });
-    ma20Series.setData(ma20.map((point) => ({ time: point.date as Time, value: point.value })) as LineData<Time>[]);
-
-    const ma60Series = chart.addSeries(LineSeries, {
-      color: palette.cyan,
-      lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    });
-    ma60Series.setData(ma60.map((point) => ({ time: point.date as Time, value: point.value })) as LineData<Time>[]);
+    const averages=movingAverages??[{label:'MA20',tone:'gold' as const,points:ma20},{label:'MA60',tone:'cyan' as const,points:ma60}];
+    for(const line of averages){
+      const series=chart.addSeries(LineSeries,{color:palette[line.tone],lineWidth:1,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+      series.setData(line.points.map(point=>({time:point.date as Time,value:point.value})) as LineData<Time>[]);
+    }
 
     const markerData: SeriesMarker<Time>[] = markers
       .filter((marker) => marker.date >= bars[0].date && marker.date <= bars[bars.length - 1].date)
@@ -274,7 +267,7 @@ export function KlineChart({
       markerPlugin.detach();
       chart.remove();
     };
-  }, [bars, ma20, ma60, markers, strategyMarkers,windowDates,mode, baseline, interactive]);
+  }, [bars, ma20, ma60,movingAverages, markers, strategyMarkers,windowDates,mode, baseline, interactive]);
 
   return (
     <div className="chart" style={{ height }} role="img" aria-label={ariaLabel}>

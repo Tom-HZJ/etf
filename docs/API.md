@@ -12,3 +12,12 @@ All application routes use the existing application authentication, except the p
 - `/api/market/bars`, `/api/market/minute`: actual source bars and data-quality state. Daily `ytd.baseline` is prior-year final close.
 
 Source-backed data and immutable research records live under ETF_DATA, which is deliberately excluded from source control. See the source `api.py` for the remaining overview, basket, watchlist and source-health endpoints.
+
+
+## ETF universe audit and chart averages
+
+`GET /api/research/universe` audits every currently tracked ETF with the same original combined-path, 20-basis-point model. The summary distinguishes applicable, separate-rule, pending-data, zero/one/multiple closed trades and entry-gap cancellations. Rows include dates, B/S confirmations, reference entries/exits, per-fund counts and messages; exclusions remain present. It is not a portfolio-performance aggregation. Cache is invalidated by the tracked-code list or any tracked/benchmark daily bar file change.
+
+Replay `diagnostics` explains qualified dates, accepted buy confirmations, reference executions, gap cancellations, ignored signals during a paper position and supportive benchmark sessions. No strategy threshold changes in this update.
+
+Daily bars add `ma5`, `ma10`, `ma30` in `ma`, with past-only warm-up. `ma20` and `ma60` remain for compatibility and strategy evaluation. Daily charts display only MA5/10/30; weekly/monthly and basket charts retain their prior settings. All displayed averages are clipped to the replay cutoff.

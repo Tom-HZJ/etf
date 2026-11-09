@@ -43,6 +43,7 @@ import { PageHeader, Panel } from '../components/Page';
 import { LabelBadge } from '../components/StateBadge';
 import { ErrorPanel, InlineLoading, PanelSkeleton } from '../components/States';
 import { KlineChart } from '../components/Charts';
+import type { MovingAverageLine } from '../components/Charts';
 import { MinuteTrendChart } from '../components/MinuteTrendChart';
 import { useNotify } from '../components/ToastHost';
 
@@ -226,9 +227,9 @@ function QuoteHeader({ quote, bars }: { quote: Quote | null; bars: BarsResponse 
               </div>
             </div>
             <div className="bg-[var(--etf-surface)] px-3 py-2">
-              <div className="metric__label">MA20 / MA60</div>
+              <div className="metric__label">{bars.span==='day'?'MA5 / MA10 / MA30':'MA20 / MA60'}</div>
               <div className="num mt-0.5 text-[13px] text-[var(--etf-ink-2)]">
-                {lastMa(bars.ma.ma20)} / {lastMa(bars.ma.ma60)}
+                {bars.span==='day'?`${lastMa(bars.ma.ma5??[])} / ${lastMa(bars.ma.ma10??[])} / ${lastMa(bars.ma.ma30??[])}`:`${lastMa(bars.ma.ma20)} / ${lastMa(bars.ma.ma60)}`}
               </div>
             </div>
             <div className="bg-[var(--etf-surface)] px-3 py-2">
@@ -288,13 +289,18 @@ function DetailChart({
       ma60: bars.ma.ma60.filter((point) => point.date >= start&&point.date<=end),
     };
   }, [bars, ranged]);
+  const displayedAverages=useMemo<MovingAverageLine[]>(()=>{
+    const start=ranged?.bars[0]?.date??'',end=ranged?.bars[ranged.bars.length-1]?.date??'';
+    const filter=(points:{date:string;value:number}[])=>points.filter(point=>point.date>=start&&point.date<=end);
+    return bars?.span==='day'?[{label:'MA5',tone:'gold',points:filter(bars.ma.ma5??[])},{label:'MA10',tone:'cyan',points:filter(bars.ma.ma10??[])},{label:'MA30',tone:'violet',points:filter(bars.ma.ma30??[])}]:[{label:'MA20',tone:'gold',points:rangedMa.ma20},{label:'MA60',tone:'cyan',points:rangedMa.ma60}];
+  },[bars,ranged,rangedMa]);
 
   const hasData = minute ? (minutes?.bars.length ?? 0) > 0 : (ranged?.bars.length ?? 0) > 0;
   const latestMinuteDay = minutes?.as_of?.slice(0,10);
   const sessionCount = minutes?.bars.filter(bar => bar.time.slice(0,10) === latestMinuteDay).length ?? 0;
   const sub = minute
     ? `${minutes?.name ?? '—'} · ${minutes?.interval ?? '—'} 分钟 · ${sessionCount} 个当日点 · 涨跌幅（${minuteBasis !== null ? '相对昨收' : '相对首分钟'}）`
-    : `${bars?.name ?? '—'} · 前复权 · ${bars?.bars.length ?? 0} 根 · MA20/60`;
+    : `${bars?.name ?? '—'} · 前复权 · ${bars?.bars.length ?? 0} 根 · ${bars?.span==='day'?'MA5/10/30':'MA20/60'}`;
   const rangeLabel = RANGES.find((item) => item.value === range)?.label ?? '全部';
   const plottedMarkers=useMemo(()=>bars?.span==='day'&&replay.markers!=='none'?(replay.markers==='signals'?replay.data?.signals:replay.data?.executions)?.map(point=>({...point,label:`${point.side==='buy'?'B':'S'}${replay.markers==='signals'?'确认':'开'}`})):undefined,[bars?.span,replay.data,replay.markers]);
 
@@ -369,12 +375,7 @@ function DetailChart({
           </div>
         ) : (
           <div className="chart__legend">
-            <span className="legend-key text-[var(--etf-gold)]">
-              <i />MA20
-            </span>
-            <span className="legend-key text-[var(--etf-cyan)]">
-              <i />MA60
-            </span>
+            {displayedAverages.map(line=><span key={line.label} className="legend-key" style={{color:`var(--etf-${line.tone})`}}><i/>{line.label}</span>)}
             <span className="legend-key text-[var(--etf-muted)]">
               <i style={{ background: 'var(--etf-muted)' }} />基准
             </span>
@@ -407,6 +408,7 @@ function DetailChart({
               bars={ranged.bars}
               ma20={rangedMa.ma20}
               ma60={rangedMa.ma60}
+              movingAverages={displayedAverages}
               baseline={ranged.baseline}
               strategyMarkers={plottedMarkers}
               windowDates={bars.span==='day'&&range==='ytd'?replay.dates:undefined}
