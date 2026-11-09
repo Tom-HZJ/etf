@@ -14,13 +14,10 @@ import math
 from datetime import datetime, timedelta
 from typing import Any, Mapping, Sequence
 
-from . import analytics, config, store
+from . import analytics, config, store, strategy
 
-RULE_VERSION = 'self-trend-two-paths-v3'
-PARAMETERS = {'ma_fast': 20, 'ma_slow': 60, 'atr': 14,
-              'extension_atr': 1.5, 'maximum_risk_atr': 2.0,
-              'setup_lookback': 5, 'valid_next_sessions': 1,
-              'review_after_sessions': 5, 'maximum_holding_sessions': 20}
+RULE_VERSION = strategy.ENTRY_VERSION
+PARAMETERS = strategy.PARAMETERS
 
 
 def number(value: Any) -> float | None:
@@ -70,133 +67,66 @@ def expected_close_date(moment):
 
 
 def _contexts(data):
-    closes=[r['close'] for r in data]; total=[0.0]; tr=[0.0]
-    for i,row in enumerate(data):
-        total.append(total[-1]+row['close'])
-        previous=closes[i-1] if i else row['close']
-        tr.append(tr[-1]+max(row['high']-row['low'],abs(row['high']-previous),abs(row['low']-previous)))
-    result=[]
-    for i,row in enumerate(data):
-        ma20=(total[i+1]-total[i-19])/20 if i>=19 else None
-        old20=(total[i-4]-total[i-24])/20 if i>=24 else None
-        ma60=(total[i+1]-total[i-59])/60 if i>=59 else None
-        vol=(tr[i+1]-tr[i-13])/14 if i>=14 else None
-        fast=bool(ma20 and old20 and closes[i]>ma20 and ma20>old20)
-        result.append({'ma20':ma20,'ma60':ma60,'atr14':vol,'fast':fast,
-                       'strong':bool(fast and ma60 and ma20>ma60)})
-    return result
+    return strategy.contexts(data)
 
 
-def screen(entity, bars, cutoff, heat=None, *, collect_events=False):
-    """Causal two-path research: preparation is separate from qualified signals."""
+def screen(entity,bars,cutoff,heat=None,*,collect_events=False):
     data,bad=clean_bars(bars,cutoff);count=len(data)
     result={'code':entity['code'],'name':entity.get('name',entity['code']),
             'direction':entity.get('direction',''),'group':entity.get('group',''),'heat':heat,
-            'phase':'insufficient','reason':'日线尚不足，后台会检查来源和上市日期',
+            'phase':'insufficient','reason':'自身完整日线不足，等待后台核对',
             'data_date':data[-1]['date'] if data else None,'trigger_date':None,'last_signal_date':None,
             'price_event_date':None,'reference_close':None,'invalidation_close':None,
             'entry_distance_atr':None,'risk_distance_atr':None,'risk_distance_pct':None,
             'evaluation_not_before':None,'eligible':False,'prealert':False,'trend_confirmed':False,
-            'history_bars':count,'decision_scope':'self_only','external_reference_required':False,
-            'history_sufficient':count>=65,'paths':[],
-            'exit_plan':['股票ETF按T+1可卖后复核结构失效价；跳空可能超过计划风险',
-                         '连续两日收盘低于MA20，结束本次观察',
-                         '持有5个交易日无延续重新评估，最长20个交易日复核退出']}
+            'history_bars':count,'history_sufficient':count>=65,'paths':[],
+            'decision_scope':'self_only','external_reference_required':False,'entry_anchor':'MA10',
+            'model_status':'experimental','model_label':'转强与阶段退出 v4（研究）',
+            'exit_plan':['初始风险R以模拟开盘价减结构失效线计算；达到1R后启用名义开仓价保护线，只收紧',
+                         '收盘达到1.5R阶段目标、跌破结构或利润保护线，下一交易日开盘作退出参考',
+                         '连续两日收盘低于MA10、5日无延续或持有10日，依先到条件复核；T+1及跳空仍可能亏损']}
     text=str(entity.get('group',''))+str(entity.get('direction',''))+str(entity.get('name',''))
     if entity['code'].startswith('sh513') or any(k in text for k in ('港股','恒生','海外','跨境','纳指','标普','道琼斯','美国','黄金','原油','QDII','中概')):
-        return {**result,'phase':'separate_rules','reason':'跨境或商品品种需独立研究，未套用股票ETF规则'}
-    if bad:return {**result,'phase':'invalid_data','reason':'检测到无效OHLC，已暂停信号并交给后台补数'}
-    if count<25:return {**result,'phase':'history_short','reason':f'现有{count}根完整日线；准备形态至少25根，完整触发至少65根'}
-    contexts=_contexts(data);current=contexts[-1];vol=current['atr14'];close=data[-1]['close']
-    result.update(reference_close=close,ma20=current['ma20'],ma60=current['ma60'],atr14=vol,
-                  trend_confirmed=current['strong'],evaluation_not_before=data[-1]['date']+'T15:10:00+08:00')
-    if not vol or vol<=0:return result
-    result['entry_distance_atr']=round((close-current['ma20'])/vol,3)
-    def geometry(i,low):
-        c=contexts[i];v=c['atr14']
-        if not v or not c['ma20']:return False,None,None
-        stop=low-.25*v;risk=data[i]['close']-stop
-        valid=(i>=64 and c['fast'] and 0<=data[i]['close']-c['ma20']<=PARAMETERS['extension_atr']*v
-               and stop>0 and 0<risk<=PARAMETERS['maximum_risk_atr']*v)
-        return valid,stop,risk
-    events=[]
+        return {**result,'phase':'separate_rules','reason':'跨境或商品需独立研究，未套用本股票ETF规则'}
+    if bad:return {**result,'phase':'invalid_data','reason':'自身OHLC存在异常，暂停确认，等待后台核对'}
+    if count<25:return {**result,'phase':'history_short','reason':f'现有{count}根完整日线，准备观察至少25根，确认至少65根'}
+    scanned=strategy.scan(data);cs=scanned['contexts'];c=cs[-1];v=c['atr14'];close=data[-1]['close'];events=scanned['events'];state=scanned['state']
     if collect_events:result['events']=events
-    touch=None;consumed=None;last_valid=None;last_valid_index=None;price_event=None;pull_today=None;break_today=None;prior_break=False
-    for i in range(24,count):
-        c=contexts[i];v=c['atr14'];ma=c['ma20']
-        if not v or not ma:continue
-        if touch is not None and i-touch>PARAMETERS['setup_lookback']:
-            touch=None
-        if consumed is not None and i>consumed+1:
-            if max(r['close'] for r in data[consumed+1:i])>=data[consumed]['close']+v:consumed=None
-        peak=max(r['close'] for r in data[i-10:i])
-        touching=(ma>contexts[i-1]['ma20'] and data[i]['close']>=ma-.5*v
-                  and data[i]['low']<=ma+.5*v and peak-data[i]['low']>=v)
-        if touch is None and consumed is None and touching:touch=i
-        if touch is not None and i>touch and data[i]['close']>data[i-1]['high']:
-            price_event=data[i]['date']
-            good,stop,risk=geometry(i,min(r['low'] for r in data[touch:i+1]))
-            if i==count-1:pull_today={'good':good,'stop':stop,'risk':risk,'setup_date':data[touch]['date']}
-            if good:
-                if collect_events:events.append({'date':data[i]['date'],'path':'pullback','invalidation':stop})
-                last_valid=data[i]['date'];last_valid_index=i;consumed=i;touch=None
-        high=max(r['high'] for r in data[i-20:i])
-        crossing=data[i]['close']>high
-        if crossing and not prior_break:
-            price_event=data[i]['date']
-            good,stop,risk=geometry(i,min(r['low'] for r in data[i-4:i+1]))
-            if i==count-1:break_today={'good':good,'stop':stop,'risk':risk,'setup_date':data[i-20]['date']}
-            if good:
-                if collect_events:events.append({'date':data[i]['date'],'path':'breakout','invalidation':stop})
-                last_valid=data[i]['date'];last_valid_index=i
-        prior_break=crossing
-    result.update(last_signal_date=last_valid,price_event_date=price_event)
-    for name,event in [('breakout',break_today),('pullback',pull_today)]:
-        label='首次通道突破' if name=='breakout' else '回踩后首次符合完整条件'
-        result['paths'].append({'path':name,'label':label,'price_event_today':event is not None,
-                                'geometry_allowed':bool(event and event['good']),
-                                'eligible':bool(event and event['good'])})
-    chosen=next((v for v in (break_today,pull_today) if v and v['good']),None)
-    if chosen:
-        result.update(invalidation_close=round(chosen['stop'],4),risk_distance_atr=round(chosen['risk']/vol,3),
-                      risk_distance_pct=round(chosen['risk']/close,5),setup_date=chosen['setup_date'])
+    result.update(reference_close=close,ma5=c['ma5'],ma10=c['ma10'],ma20=c['ma20'],ma30=c['ma30'],ma60=c['ma60'],atr14=v,
+                  trend_confirmed=c['fast'],evaluation_not_before=data[-1]['date']+'T15:10:00+08:00',
+                  preparation={'armed_date':state.get('armed_date'),'expires_after_sessions':5,'reset_on_own_structure_loss':True})
+    if not v or v<=0:return result
+    result['entry_distance_atr']=round((close-c['ma10'])/v,3)
+    today=[e for e in events if e['date']==data[-1]['date']]
+    last=events[-1] if events else None
+    result['last_signal_date']=last['date'] if last else None
+    result['price_event_date']=state.get('date') if state.get('today') else None
+    result['paths']=[{'path':'breakout','label':'MA5/MA10首次转强','price_event_today':bool(state.get('today')),
+                      'geometry_allowed':bool(today),'eligible':bool(today)}]
+    if today:
+        e=today[0];risk=close-e['invalidation']
         return {**result,'phase':'triggered','eligible':True,'trigger_date':data[-1]['date'],
-                'reason':'自身首次满足完整研究路径与位置风险条件；下一交易日纸面观察，不代表成交或收益'}
-    recent_range=sum(r['high']-r['low'] for r in data[-5:])/5
-    near_high=max(r['high'] for r in data[-21:-1])-close<=vol
-    prepare_break=(0<=result['entry_distance_atr']<=PARAMETERS['extension_atr'] and close>=current['ma20'] and near_high and recent_range<=vol)
-    prepare_pull=touch is not None and result['entry_distance_atr']<=PARAMETERS['extension_atr']
-    if prepare_break or prepare_pull:
-        return {**result,'phase':'preparing','prealert':True,
-                'setup_date':data[touch]['date'] if prepare_pull else data[-1]['date'],
-                'reason':('回踩准备结构仍有效，等待新的合格转强' if prepare_pull else '靠近前期高位且短期波幅收敛，进入突破前观察')+
-                         ('；历史不足65根，暂不生成完整触发' if count<65 else '；预警不是买入信号')}
-    if result['entry_distance_atr']>PARAMETERS['extension_atr']:
-        return {**result,'phase':'extended','reason':'价格偏离MA20超过1.5ATR，保留趋势背景，不追认新窗口'}
-    if last_valid and last_valid_index is not None and count-1-last_valid_index<=20 and data[-1]['date']!=last_valid:
-        return {**result,'phase':'tracking','reason':f'按当前规则回算，{last_valid}曾满足完整条件；等待新的准备结构，非当时实发记录'}
-    if count<65:return {**result,'phase':'history_short','reason':f'现有{count}根日线，不足65根；后台已自动检查，上市前不会补造价格'}
-    return {**result,'phase':'await_setup' if current['fast'] else 'no_trend',
-            'reason':'短期趋势改善，等待新的准备结构' if current['fast'] else '短期趋势尚未形成，继续观察'}
+                'invalidation_close':round(e['invalidation'],6),'risk_distance_atr':round(risk/v,3),
+                'risk_distance_pct':round(risk/close,5),'setup_date':e['setup_date'],
+                'reason':'自身MA5首次上穿MA10、MA10向上，位置与风险条件通过；下一交易日纸面观察，开盘仍须复核'}
+    near=(abs(c['ma5']-c['ma10'])<=.25*v and strategy.greater(c['ma5'],cs[-2]['ma5']) and close>=c['ma10']-.5*v)
+    prepare=(near or (state.get('armed_date') is not None and not state.get('episode_consumed'))) and result['entry_distance_atr']<=1.5
+    if prepare:
+        return {**result,'phase':'preparing','prealert':True,'setup_date':state.get('armed_date') or data[-1]['date'],
+                'reason':'5/10日线出现早期转强变化，尚未形成合格交叉确认；仅供观察，准备窗口最多5个交易日'+('；确认仍需65根历史' if count<65 else '')}
+    if result['entry_distance_atr']>1.5:
+        return {**result,'phase':'extended','reason':'自身价格距MA10超过1.5ATR，暂不追认新确认点'}
+    if last and sum(r['date']>last['date'] for r in data)<=10:
+        return {**result,'phase':'tracking','reason':f'当前版本回算{last["date"]}曾满足确认；本轮不重复确认，结构失效后重新观察'}
+    if count<65:return {**result,'phase':'history_short','reason':f'现有{count}根日线，尚不足65根完整历史；不补造上市前价格'}
+    return {**result,'phase':'await_setup' if c['fast'] else 'no_trend',
+            'reason':'自身短期结构仍转强，等待新的合格交叉；已过期准备不延续' if c['fast'] else '自身短期结构尚未转强；旧准备已失效，可重新观察'}
 
 
-def assess_position(position, bars, cutoff):
-    """Paper-position review only. Never produces an order or guarantees stop fills."""
-    data, bad = clean_bars(bars, cutoff)
-    entry = str(position.get('entry_date') or '')
-    price, stop = number(position.get('entry_price')), number(position.get('invalidation_close'))
-    if bad or not data or not price or price <= 0 or not stop or stop <= 0 or not entry or not any(b['date'] == entry for b in data):
-        return {'state': 'unknown'}
-    held = [b for b in data if b['date'] >= entry]
-    if not held: return {'state': 'unknown'}
-    if held[-1]['date'] == entry: return {'state': 't1_locked', 'sellable': False, 'gap_risk': True}
-    closes = [b['close'] for b in data]
-    broken = held[-1]['close'] < stop
-    below_ma = len(data) >= 21 and all(closes[-j] < mean(closes[-20-j+1:len(closes)-j+1]) for j in (1, 2))
-    if broken or below_ma: return {'state': 'exit_review', 'sellable': True, 'reason': '结构失效或连续两日跌破MA20'}
-    if len(held) > 20: return {'state': 'time_review', 'sellable': True, 'reason': '已到20个持有交易日复核上限'}
-    if len(held) > 5 and held[-1]['close'] <= price: return {'state': 'stalled', 'sellable': True, 'reason': '5个持有交易日后仍无延续'}
-    return {'state': 'monitor', 'sellable': True}
+def assess_position(position,bars,cutoff):
+    """Compatibility review for legacy manual paper positions; v4 exits use strategy.simulate."""
+    from . import legacy_research
+    return legacy_research.assess_position(position,bars,cutoff)
 
 
 def _build_payload(moment=None):
@@ -205,7 +135,8 @@ def _build_payload(moment=None):
     for code in config.HOTSPOT_CODES:
         e = config.ENTITIES[code]
         own_bars=store.load_bars(code)
-        heat=analytics.analyze_hotspot_row({'code':code,'name':e.name,'direction':e.direction,'group':e.group},[b for b in own_bars if str(b.get('date',''))<=cutoff],{})['heat']
+        _,invalid=clean_bars(own_bars,cutoff)
+        heat=None if invalid else analytics.analyze_hotspot_row({'code':code,'name':e.name,'direction':e.direction,'group':e.group},[b for b in own_bars if str(b.get('date',''))<=cutoff],{})['heat']
         row=screen({'code': code, 'name': e.name, 'direction': e.direction, 'group': e.group},own_bars,cutoff,heat)
         if row['phase']!='separate_rules' and row.get('data_date') and row['data_date']<target:
             row.update(eligible=False,prealert=False,phase='stale',reason='该ETF自身完整日线未更新，暂停本ETF的新观察判断')

@@ -228,7 +228,7 @@ def dispatch_get(app: views.App, path: str, query: Mapping[str, list[str]]) -> d
         cutoff = _first(query, 'cutoff') or None
         try:
             cost = int(_first(query, 'cost_bps') or '20')
-            return replay.build_payload(code,strategy,cutoff,cost)
+            return replay.build_payload(code,strategy,cutoff,cost,model=_first(query,'model') or 'current')
         except ValueError as exc:
             raise ApiError(400,'bad_request',str(exc)) from exc
     if path == "/api/research/universe":

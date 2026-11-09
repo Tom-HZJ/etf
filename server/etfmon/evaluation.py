@@ -4,7 +4,7 @@ from collections import defaultdict
 import hashlib
 import json
 import statistics
-from . import config, research, store
+from . import config, research, store, strategy
 
 def outcomes(bars,signal_date,horizon):
     index=next((i for i,row in enumerate(bars) if row['date']==signal_date),None)
@@ -34,7 +34,7 @@ def build(moment=None):
                 else:values[(event['path'],horizon)].append(value);item['outcomes'][str(horizon)]=value
             events.append(item)
     rows=[]
-    for path in ('breakout','pullback'):
+    for path in strategy.ACTIVE_PATHS:
         for horizon in (5,10,20):
             data=values[(path,horizon)]
             for cost in (0,10,20,40):

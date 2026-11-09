@@ -147,9 +147,9 @@ export function ResearchPage({
       <div id="research-app">
         <header className="research-head">
           <div className="eyebrow">SWING RESEARCH · 数天至数周</div>
-          <h1>确认趋势，再等位置。</h1>
+          <h1>先看转强，再看位置。</h1>
           <p>
-            先看到准备结构，再核对突破或回踩转强。预警帮助提前观察，完整确认只核对该ETF自身趋势、位置与风险条件。
+            提前观察5/10日线变化，交叉确认仍须核对自身位置与风险；旧结构失效后重新开始观察。
           </p>
           {data ? (
             <div id="research-status" role="status">
@@ -158,7 +158,7 @@ export function ResearchPage({
                 ? "数据待补齐，已暂停候选判断"
                 : "历史数据重算 · 研究假设"}{" "}
               · {data.sources.join(" / ") || "—"} · 最近采集{" "}
-              {data.latest_collected_at ?? "—"} · 独立规则 v3{data.stale_count ? ` · ${data.stale_count}只自身数据待更新` : ""}
+              {data.latest_collected_at ?? "—"} · 独立研究模型 v4{data.stale_count ? ` · ${data.stale_count}只自身数据待更新` : ""}
             </div>
           ) : null}
         </header>
@@ -180,9 +180,9 @@ export function ResearchPage({
                   "不设沪深300或其他宽基门槛",
                 ],
                 [
-                  "日线趋势方向",
+                  "短期转强方向",
                   data.rows.filter((r) => r.trend_confirmed).length,
-                  "价格 > MA20 > MA60，斜率向上",
+                  "MA5 > MA10，MA10向上，收盘在MA10上",
                 ],
                 [
                   "准备阶段预警",
@@ -244,7 +244,7 @@ export function ResearchPage({
                         <th>代表 ETF / 日线日期 · 点名称在本页查看</th>
                         <th>当前阶段</th>
                         <th>参考收盘</th>
-                        <th>距 MA20</th>
+                        <th>距 MA10</th>
                         <th>参考风险距离</th>
                       </tr>
                     </thead>
@@ -303,7 +303,7 @@ export function ResearchPage({
         <details className="research-method">
           <summary>规则与数据口径</summary>
           <p>
-            每只ETF独立判断，不读取沪深300或其他宽基走势作为准入条件。标的用自身收盘高于MA20、MA20较5日前向上作为较快条件，MA60保留为趋势背景。仅用15:10以后确认收盘的日线。分别研究首次20日通道突破和5个交易日内的回踩转强；只有当天完整条件通过才记录有效确认。准备预警不是买入信号。早期价格事件不会提前消耗合法信号；下一交易日进入纸面观察。距离MA20超过1.5个ATR或到结构失效点超过2个ATR，暂停追认。阈值是待验证假设，不是最优参数。
+            每只ETF独立判断：v4以MA5首次上穿MA10、MA10向上且收盘在MA10之上确认早期转强；MA30仅作背景。收盘距MA10须在0至1.5ATR，初始风险不超过2ATR；下一交易日开盘再次复核，超界取消。准备窗口最多5个交易日，结构失效即重置，旧标记不跨行情延续。卖出使用1R后利润保护、1.5R阶段目标、两日低于MA10、5日无延续或10日复核。只使用15:10后完整日线，不设任何宽基门槛。历史已用于研究，单笔中位结果仍为负，收益有集中性；这些阈值仍是假设，不是已验证盈利策略。
           </p>
           <p>
             跨境与商品ETF分开处理。当前页面是按现有历史数据重算；部署后的日终采集追加带真实记录时间的观察档案，不补造历史“当时已知”信号。不接交易账户、不自动下单。不使用最新份额反推的国家队合成K线来评估入场。尚无独立交易所假日日历，缺完整基准日线时保守暂停。

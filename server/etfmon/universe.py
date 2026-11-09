@@ -52,7 +52,7 @@ def build_payload(moment=None):
                 'rule_version':replay.VERSION,'path':'combined','cost_bps':20,'rows':rows,'summary':summarize(rows),
                 'notes':['仅当前关注ETF，并非全市场基金池；年初空仓、合并路径、20基点往返成本假设',
                          '零信号、未执行、单笔和多笔均保留；没有每个ETF最多一笔的限制，不为凑数量补画',
-                         '图上MA5/10/30是显示设置；进出规则只用ETF自身MA20/60和ATR，不设宽基门槛',
+                         '图上MA5/10/30是显示设置；v4进出规则使用自身MA5/10和ATR，阶段退出与保护线；不设宽基门槛',
                          '逐只ETF的笔数不能相加解读为组合收益，相关品种存在高度重叠']}
         if _fingerprint(codes,moment)!=key:return {**result,'state':'updating','rows':[],'summary':{},'message':'来源正在更新，请稍后刷新'}
         _KEY=key;_DATA=copy.deepcopy(result);return result

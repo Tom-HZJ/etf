@@ -11,3 +11,5 @@
 - Three-year rally anatomy is descriptive and separate from B/S: hindsight troughs/peaks must never become historical live signals. Keep fixed thresholds, complete equal follow-up in controls, per-field sample sizes and the listing/suspension evidence. Do not infer historical turnover from current shares.
 
 - All strategy paths are self-only. Never reinstate mandatory market/index/proxy filters without an explicit user request. Heat uses own momentum, not relative CSI300 performance. Price tickers and national-team fund flows are context only. Preserve prior version decision/evaluation records; historical recalculation must be labelled.
+
+- v4 is an experimental MA5/10 first-cross model with MA10/ATR geometry, bounded setup state and R-based stage/protection exits. Do not promote the rejected loose-alignment/pullback variants. Legacy v3 replay must remain exact, including its original state logic; do not silently fix or relabel old comparison results. Never mix current/legacy markers while a request is pending.

@@ -109,8 +109,9 @@ class DataUpgradeTests(unittest.TestCase):
   self.assertAlmostEqual(value['gross_return'],rows[7]['close']/rows[2]['open']-1)
   self.assertIsNone(evaluation.outcomes(rows,rows[-2]['date'],5))
   rows[2]['high']=rows[2]['low'];self.assertIsNone(evaluation.outcomes(rows,rows[1]['date'],5))
- def test_two_path_historical_events_are_prefix_causal(self):
+ def test_legacy_two_path_historical_events_are_prefix_causal(self):
   import math
+  from etfmon import legacy_research as research
   rows=[bar((datetime(2025,1,1)+timedelta(days=i)).date().isoformat(),100+i*.03+math.sin(i*.4)) for i in range(160)]
   states={r['date']:'supportive' for r in rows};entity={'code':'sh512480','name':'半导体'}
   def screen(data):return research.screen(entity,data,data[-1]['date'],collect_events=True)

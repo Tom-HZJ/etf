@@ -4,7 +4,7 @@ import tempfile
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
-from etfmon import research, analytics, config, store
+from etfmon import legacy_research as research, analytics, config, store
 
 def bars(prices):
     start=datetime(2026, 1, 1)

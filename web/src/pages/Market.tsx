@@ -270,7 +270,8 @@ function DetailChart({
   const [range, setRange] = useState<RangeKey>('ytd');
   const minute = payload.kind === 'minute';
   const rawBars = payload.kind === 'bars' ? payload.data : null;
-  const bars = useMemo(()=>rawBars&&rawBars.span==='day'&&replay.data?.as_of?{...rawBars,bars:rawBars.bars.filter(row=>row.date<=replay.data!.as_of!)}:rawBars,[rawBars,replay.data?.as_of]);
+  const replayCutoff=replay.cutoff||replay.data?.as_of;
+  const bars = useMemo(()=>rawBars&&rawBars.span==='day'&&replayCutoff?{...rawBars,bars:rawBars.bars.filter(row=>row.date<=replayCutoff)}:rawBars,[rawBars,replayCutoff]);
   const minutes = payload.kind === 'minute' ? payload.data : null;
   const warning = minute ? minutes?.warning : bars?.warning;
 
