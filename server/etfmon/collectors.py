@@ -626,6 +626,7 @@ def daily_refresh(cache: QuoteCache, moment: datetime | None = None) -> dict[str
     try:
         from . import research
         summary["research_record"] = research.record_close(store.now())
+        summary["expanded_research_record"] = research.record_close(store.now(),model='expanded')
     except (ValueError, OSError) as exc:
         warnings.append(f"研究观察记录失败：{exc}")
 
