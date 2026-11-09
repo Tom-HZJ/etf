@@ -727,6 +727,17 @@ class ApiTest(unittest.TestCase):
         self.assertIn("rows", payload)
 
 
+    def test_replay_model_selection_preserves_versions(self) -> None:
+        for model,version in [('current','self-early-turn-v4/protected-bite-v2'),('legacy','self-trend-two-paths-v3/close-exit-v1')]:
+            status,payload=self.json_get('/api/research/replay?code=sh512480&model='+model)
+            self.assertEqual(status,200);self.assertEqual(payload['model'],model)
+            self.assertEqual(payload['rule_version'],version);self.assertFalse(payload['external_reference_required'])
+
+    def test_unknown_replay_model_is_rejected(self) -> None:
+        status,_=self.json_get('/api/research/replay?code=sh512480&model=unknown')
+        self.assertEqual(status,400)
+
+
 def analytics_states() -> set[str]:
     from etfmon import analytics
 

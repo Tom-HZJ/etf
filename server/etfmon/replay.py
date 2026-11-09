@@ -6,76 +6,22 @@ from __future__ import annotations
 import copy
 from datetime import date
 import threading
-from . import config,research,store
+from . import config,research,store,strategy
 
-VERSION=research.RULE_VERSION+'/close-exit-v1'
+VERSION=research.RULE_VERSION+'/'+strategy.EXIT_VERSION
 _CACHE={};_LOCK=threading.RLock()
-NOTES=['历史回算，不是当时实发信号；年初空仓，单标的单仓位，不接账户、不下单',
-       '只使用完整日线：B/S确认在收盘，B开/S开在下一交易日开盘作模拟参考；不保证成交',
-       '开盘先检验此前已知的MA20、ATR和失效线；跳空超界取消开仓，不把信号收盘价当成交价',
-       '退出依次检查结构失效、2ATR跟踪线、连续两日低于MA20、5日无延续、20日复核；确认后次日开盘参考',
-       '无盘中止损模拟；跳空、涨跌停、停牌、滑点和最低佣金可能使实际结果更差',
-       '独立判断：只使用该ETF自身价格、均线和ATR；不读取宽基走势作为准入条件；缺失日线不补造，按实际可用交易记录回放',
-       '当前基金池和当前前复权历史，存在幸存者及复权口径偏差，未经独立样本外验证']
+NOTES=['历史回算，非当时实发信号；年初空仓、单ETF纸面模型，不接账户、不下单',
+       'v4仅用自身MA5/10首次交叉、MA10斜率、位置和ATR风险；MA30仅作背景，不设宽基条件',
+       '收盘确认后下一交易日开盘参考；开盘再次复核此前已知MA10和ATR，超界取消，不在昨日收盘补成交',
+       'R=模拟开盘价减初始结构失效价；收盘浮盈达到1R后启动名义开仓价/2ATR保护线，只收紧；不保证保本或成交',
+       '收盘达到1.5R阶段目标、结构或利润保护失效、两日低于MA10、5日无延续、10日复核，先满足者次日开盘参考',
+       '只有完整日线，不模拟盘中撮合；T+1、跳空、涨跌停、滑点和最低佣金可能使结果更差',
+       '截至2026-11-09的内部历史检验中，单笔中位结果为负，收益有集中性；历史已用于研究，尚未通过真正样本外验证',
+       '当前基金池有选择偏差，前复权历史会修订；不同ETF结果不能相加作为组合收益']
 
 def simulate(bars,contexts,events,year,cost_bps=20):
-    """At each date, process pending orders at OPEN, then CLOSE-only decisions."""
-    by_date={}
-    for event in events:by_date.setdefault(event['date'],event)
-    signals=[];fills=[];trades=[];cancelled=[];position=None;pending=None
-    nav=1.;peak_nav=1.;max_dd=0.;curve=[];half=cost_bps/20000
-    for i,row in enumerate(bars):
-        if not row['date'].startswith(str(year)):continue
-        c=contexts[i]
-        if pending:
-            signal=pending;pending=None;op=row['open']
-            if signal['side']=='buy':
-                previous=contexts[i-1];stop=signal['invalidation'];atr=previous['atr14'];ma=previous['ma20']
-                if not atr or not ma or not (0<=op-ma<=1.5*atr and 0<op-stop<=2*atr):
-                    signal['status']='cancelled';cancelled.append({'date':row['date'],'signal_date':signal['date'],'reason':'开盘超出此前位置/风险边界，取消模拟开仓'})
-                else:
-                    signal.update(status='referenced',reference_date=row['date'],reference_price=op)
-                    position={'entry_signal_date':signal['date'],'entry_date':row['date'],'entry_price':op,'entry_index':i,
-                              'path':signal['path'],'initial_stop':stop,'trailing_stop':stop,'peak_close':op,'trade_id':len(trades)+1}
-                    fills.append({'date':row['date'],'side':'buy','price':op,'signal_date':signal['date'],'reason':signal['reason'],'trade_id':position['trade_id']})
-            elif position:
-                signal.update(status='referenced',reference_date=row['date'],reference_price=op)
-                value=op*(1-half)/(position['entry_price']*(1+half))-1
-                trades.append({**{k:v for k,v in position.items() if k!='entry_index'},'exit_signal_date':signal['date'],
-                               'exit_date':row['date'],'exit_price':op,'exit_reason':signal['reason'],
-                               'held_sessions':i-position['entry_index'],'net_return':value})
-                nav*=1+value
-                fills.append({'date':row['date'],'side':'sell','price':op,'signal_date':signal['date'],'reason':signal['reason'],'trade_id':position['trade_id']})
-                position=None
-        if position:
-            position['peak_close']=max(position['peak_close'],row['close'])
-            position['trailing_stop']=max(position['trailing_stop'],position['peak_close']-2*(c['atr14'] or 0))
-            held=i-position['entry_index']+1;reason=None
-            if row['close']<position['initial_stop']:reason='收盘跌破结构失效线'
-            elif row['close']<position['trailing_stop']:reason='收盘触及2ATR跟踪退出线'
-            elif held>=2 and c['ma20'] and contexts[i-1]['ma20'] and row['close']<c['ma20'] and bars[i-1]['close']<contexts[i-1]['ma20']:reason='连续两日收盘低于MA20'
-            elif held>=5 and row['close']<=position['entry_price']:reason='持有5个交易日无延续'
-            elif held>=20:reason='持有20个交易日到期复核'
-            if reason:
-                pending={'date':row['date'],'side':'sell','price':row['close'],'reason':reason,'path':position['path'],
-                         'invalidation':position['trailing_stop'],'status':'pending','reference_date':None,'reference_price':None}
-                signals.append(pending)
-        elif row['date'] in by_date:
-            event=by_date[row['date']]
-            pending={'date':row['date'],'side':'buy','price':row['close'],'reason':'首次通道突破' if event['path']=='breakout' else '回踩后完整条件确认',
-                     'path':event['path'],'invalidation':event['invalidation'],'status':'pending','reference_date':None,'reference_price':None}
-            signals.append(pending)
-        # Estimated liquidation value includes both assumed costs; no future exit.
-        marked=nav*(row['close']*(1-half)/(position['entry_price']*(1+half)) if position else 1)
-        peak_nav=max(peak_nav,marked);max_dd=min(max_dd,marked/peak_nav-1)
-        curve.append({'date':row['date'],'nav':marked})
-    if position:
-        position={k:v for k,v in position.items() if k!='entry_index'}
-        position.update(as_of=bars[-1]['date'],unrealized_net_return=bars[-1]['close']*(1-half)/(position['entry_price']*(1+half))-1)
-    return {'signals':signals,'executions':fills,'trades':trades,'cancelled':cancelled,'position':position,'pending':pending,
-            'equity_curve':curve,'summary':{'closed_trades':len(trades),'positive_trades':sum(t['net_return']>0 for t in trades),
-            'win_fraction':sum(t['net_return']>0 for t in trades)/len(trades) if trades else None,
-            'model_net_return':curve[-1]['nav']-1 if curve and fills else None,'model_max_drawdown':max_dd if fills else None}}
+    return strategy.simulate(bars,contexts,events,year,cost_bps)
+
 
 def _build(code,path,cutoff,cost_bps,moment):
     completed=research.completed_cutoff(moment);requested=cutoff or completed;year=moment.astimezone(config.SHANGHAI_TZ).year
@@ -83,7 +29,7 @@ def _build(code,path,cutoff,cost_bps,moment):
     all_bars,_=research.clean_bars(raw,completed)
     data,bad=research.clean_bars(raw,requested)
     result={'code':code,'name':config.entity_name(code),'year':year,'requested_cutoff':requested,'as_of':None,'generated_at':store.iso_now(),
-            'rule_version':VERSION,'decision_scope':'self_only','external_reference_required':False,'path':path,'cost_bps':cost_bps,'state':'insufficient','signals':[],'executions':[],'trades':[],
+            'rule_version':VERSION,'model':'current','model_label':'转强与阶段退出 v4（研究）','model_status':'experimental','decision_scope':'self_only','external_reference_required':False,'path':path,'cost_bps':cost_bps,'state':'insufficient','signals':[],'executions':[],'trades':[],
             'cancelled':[],'position':None,'pending':None,'equity_curve':[],'summary':{},'notes':NOTES,
             'available_dates':[r['date'] for r in all_bars if r['date'].startswith(str(year))],
             'source':{k:store.load_bars_payload(code).get(k) for k in ['source','updated_at','adjustment']}}
@@ -111,7 +57,12 @@ def _build(code,path,cutoff,cost_bps,moment):
             'current_reason':screened['reason'],'current_prealert':screened['prealert'],
             'message':'历史回算；完整信号与次日开盘参考分开，不预填未来价格'}
 
-def build_payload(code,path='combined',cutoff=None,cost_bps=20,moment=None):
+def build_payload(code,path='combined',cutoff=None,cost_bps=20,moment=None,*,model='current'):
+    if model not in ('current','legacy'):raise ValueError('未知模型')
+    if model=='legacy':
+        from . import legacy_replay
+        result=legacy_replay.build_payload(code,path,cutoff,cost_bps,moment)
+        return {**result,'model':'legacy','model_label':'旧规则 v3（原样对照）','model_status':'legacy'}
     moment=moment or store.now();limit=research.completed_cutoff(moment)
     if path not in ('combined','breakout','pullback'):raise ValueError('未知研究路径')
     if cost_bps not in (0,10,20,40):raise ValueError('往返成本应为0/10/20/40基点')

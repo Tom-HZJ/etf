@@ -1,6 +1,6 @@
 import unittest
 from datetime import datetime,timedelta
-from etfmon import replay
+from etfmon import legacy_replay as replay
 
 def series(n=12):
  days=[(datetime(2026,1,5)+timedelta(days=i)).date().isoformat() for i in range(n)]
