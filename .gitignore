@@ -1,0 +1,32 @@
+# Local data, account state and secrets
+server/data/
+data/
+.private/
+.env
+.env.*
+!.env.example
+secrets.env
+*.pem
+*.key
+*.p12
+*.sqlite*
+*.db
+# Build tools and dependencies
+node_modules/
+web/dist/
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.tsbuildinfo
+# Local dumps, archives and verification artifacts
+_scratch/
+_server/
+release/
+upgrade-backups/
+upgrades/
+*.tgz
+*.tar.gz
+web/screenshots/
+.DS_Store
+Thumbs.db
