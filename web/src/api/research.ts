@@ -35,12 +35,11 @@ export interface ResearchResponse {
   candidate_count: number;
   prealert_count:number;
   rows: ResearchRow[];
-  benchmark: {
-    state: string;
-    date: string | null;
-    source?: string;
-    updated_at?: string;
-  };
+  decision_scope: 'self_only';
+  external_reference_required: false;
+  sources: string[];
+  latest_collected_at: string | null;
+  stale_count: number;
 }
 export async function fetchResearch(
   signal?: AbortSignal,

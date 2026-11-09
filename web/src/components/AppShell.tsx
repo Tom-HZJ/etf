@@ -96,7 +96,7 @@ function Rail({
           </button>
         </div>
         <div className="mono mt-3 flex items-center justify-between text-[9px] tracking-[0.08em] text-[var(--etf-faint)]">
-          <span>v2.9.0 · CONTRACT v2.2</span>
+          <span>v2.10.0 · CONTRACT v2.2</span>
           <span>SHANGHAI</span>
         </div>
         <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-[var(--etf-line)] pt-2.5">
@@ -296,7 +296,7 @@ export function AppShell({
             <footer className="mt-10 border-t border-[var(--etf-line)] pt-4 text-[10.5px] leading-relaxed text-[var(--etf-faint)]">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span>ETF 观察台 · 私有研究站 · 数据仅供研究，不构成投资建议</span>
-                <span className="mono">Asia/Shanghai · v2.9.0</span>
+                <span className="mono">Asia/Shanghai · v2.10.0</span>
               </div>
             </footer>
           </div>

@@ -184,9 +184,6 @@ function HotTop({ data }: { data: OverviewResponse['hotspots'] }): React.JSX.Ele
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10.5px] text-[var(--etf-muted)]">
               <span>{row.direction}</span>
               <span>
-                相对300 <span className={deltaClass(row.relative_20d)}>{fmtPct(row.relative_20d)}</span>
-              </span>
-              <span>
                 20日 <span className={deltaClass(row.ret_20d)}>{fmtPct(row.ret_20d)}</span>
               </span>
               <span className="only-mobile">热度 {fmtNum(row.heat, 0)}</span>

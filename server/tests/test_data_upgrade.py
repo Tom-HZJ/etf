@@ -113,7 +113,7 @@ class DataUpgradeTests(unittest.TestCase):
   import math
   rows=[bar((datetime(2025,1,1)+timedelta(days=i)).date().isoformat(),100+i*.03+math.sin(i*.4)) for i in range(160)]
   states={r['date']:'supportive' for r in rows};entity={'code':'sh512480','name':'半导体'}
-  def screen(data):return research.screen(entity,data,{'state':'supportive','date':data[-1]['date'],'_states':states},data[-1]['date'],collect_events=True)
+  def screen(data):return research.screen(entity,data,data[-1]['date'],collect_events=True)
   events=screen(rows)['events'];self.assertTrue(events)
   for length in (80,120,150):
    expected=[e for e in events if e['date']<=rows[length-1]['date']]

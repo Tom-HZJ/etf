@@ -16,9 +16,11 @@ Source-backed data and immutable research records live under ETF_DATA, which is 
 
 ## ETF universe audit and chart averages
 
-`GET /api/research/universe` audits every currently tracked ETF with the same original combined-path, 20-basis-point model. The summary distinguishes applicable, separate-rule, pending-data, zero/one/multiple closed trades and entry-gap cancellations. Rows include dates, B/S confirmations, reference entries/exits, per-fund counts and messages; exclusions remain present. It is not a portfolio-performance aggregation. Cache is invalidated by the tracked-code list or any tracked/benchmark daily bar file change.
+The universe audit is internal analysis and is not mounted on the front-end research page. Its authenticated read-only endpoint remains available for diagnostics. Per-ETF charts and entry/exit records are unchanged.
 
-Replay `diagnostics` explains qualified dates, accepted buy confirmations, reference executions, gap cancellations, ignored signals during a paper position and supportive benchmark sessions. No strategy threshold changes in this update.
+`GET /api/research/universe` audits every currently tracked ETF with the same current-version combined-path, 20-basis-point model. The summary distinguishes applicable, separate-rule, pending-data, zero/one/multiple closed trades and entry-gap cancellations. Rows include dates, B/S confirmations, reference entries/exits, per-fund counts and messages; exclusions remain present. It is not a portfolio-performance aggregation. Cache is invalidated by the tracked-code list or any tracked ETF daily bar file change.
+
+Replay `diagnostics` explains qualified dates, accepted buy confirmations, reference executions, gap cancellations, ignored signals during a paper position and own available sessions. It has no benchmark dependency.
 
 Daily bars add `ma5`, `ma10`, `ma30` in `ma`, with past-only warm-up. `ma20` and `ma60` remain for compatibility and strategy evaluation. Daily charts display only MA5/10/30; weekly/monthly and basket charts retain their prior settings. All displayed averages are clipped to the replay cutoff.
 
@@ -39,3 +41,6 @@ Controls: a past-only close crossing from below to above MA20, at least 30 obser
 Activity: `ETF_DATA/activity/<code>.json`, source-reported Eastmoney daily volume (hands), amount (yuan), turnover (fraction). No fund-share reconstruction. `volume_ratio` divides today's volume by the preceding 20-observation mean, excluding today. `volume_ratio5` divides the latest five-day mean by the preceding disjoint 20-day mean. `turnover_ma5` is the latest five-day arithmetic mean. Missing fields stay null. Prices remain the existing qfq OHLC; raw amounts must not be reconstructed from adjusted prices. Source updates are archived on revisions; simple date appends do not create redundant full archives.
 
 The existing single maintenance worker owns daily activity increments, weekly full-window rechecks and hourly error backoff under `history/status.json`. Price repairs share the original write lock and archive/adjustment safeguards. No GET triggers maintenance, no new ports/authentication or trading access. Current fund selection, correlated directions, retrospective phase selection and current adjusted history limit inference; no profitability or predictive claim is made.
+
+### v2.10 independent rules
+`/api/research`, `/api/research/replay` expose `decision_scope: self_only` and `external_reference_required: false`. Research no longer exposes a benchmark gate. Replay diagnostics use `own_sessions` instead of benchmark support counts. Strategy version is `self-trend-two-paths-v3/close-exit-v1`. Hotspot heat uses own 20-day momentum; deprecated `relative_20d` is always null and is never consumed by signals/ranks. Old snapshots retain their original versions; rank differences never compare across rule versions. Evaluation returns pending until the new version is ready. Internal universe/rally APIs remain authenticated and absent from the product pages.

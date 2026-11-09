@@ -494,18 +494,12 @@ def build_team(app: App) -> dict[str, Any]:
 # ---------------------------------------------------------------- 热点
 
 
-def _benchmark_ret20(bars: Sequence[Mapping[str, Any]]) -> float | None:
-    return analytics.bar_changes(bars, 20)
-
-
 def compute_hotspot_payload(quotes: Mapping[str, dict[str, Any]], moment: datetime | None = None) -> dict[str, Any]:
     """计算热点完整 payload（日终刷新写盘：hotspots/latest.json）。"""
     moment = moment or _now()
     latest_previous = store.load_hotspots_latest()
     fallback_code = str(((latest_previous.get("flow") or {}).get("largest_csi300") or {}).get("code") or "")
     benchmark_code = analytics.select_largest_csi300(quotes, fallback_code or None)
-    benchmark_bars = store.load_bars(benchmark_code)
-    benchmark_ret = _benchmark_ret20(benchmark_bars)
     names = _names()
     rows: list[dict[str, Any]] = []
     warnings: list[str] = []
@@ -518,13 +512,12 @@ def compute_hotspot_payload(quotes: Mapping[str, dict[str, Any]], moment: dateti
         row = analytics.analyze_hotspot_row(
             {"code": code, "name": quote.get("name") or entity.name, "direction": entity.direction, "group": entity.group},
             bars,
-            benchmark_ret,
             quote,
         )
         rows.append(row)
     ranked = analytics.rank_rows(rows)
     as_of = max((str(row.get("data_date")) for row in ranked if row.get("data_date")), default=None)
-    history = store.load_hotspots_history()
+    history = [h for h in store.load_hotspots_history() if h.get("rule_version")==config.HOTSPOT_RULE_VERSION]
     changes = analytics.rank_changes(ranked, history, as_of)
     for row in ranked:
         row["rank_change_5d"] = changes.get(str(row.get("code")))
@@ -536,8 +529,6 @@ def compute_hotspot_payload(quotes: Mapping[str, dict[str, Any]], moment: dateti
     unavailable = len(ranked) - len(usable)
     if unavailable:
         warnings.append(f"{unavailable} 个方向本地日线不足 {config.HOTSPOT_MIN_BARS} 根，未参与排序")
-    if not benchmark_bars:
-        warnings.append(f"基准 {benchmark_code} 缺少本地日线，相对强度为空")
     if not flow.get("latest"):
         warnings.append("最大沪深300 ETF 尚无日份额快照")
     if not flow.get("basket") or not (flow.get("basket") or {}).get("periods"):
@@ -548,6 +539,8 @@ def compute_hotspot_payload(quotes: Mapping[str, dict[str, Any]], moment: dateti
         "as_of": as_of,
         "market_data_to": as_of,
         "version": version,
+        "rule_version": config.HOTSPOT_RULE_VERSION,
+        "decision_scope": "self_only",
         "rule": config.HEAT_RULE,
         "state": state,
         "headline": headline,
@@ -566,8 +559,8 @@ def compute_hotspot_payload(quotes: Mapping[str, dict[str, Any]], moment: dateti
         "flow": flow,
         "warnings": warnings,
         "method": {
-            "universe": f"{len(config.HOTSPOT_CODES)} 个行业/主题代表 ETF（宽基只做基准，不参与排序）",
-            "benchmark": f"动态选择总市值最大的沪深300 ETF：{benchmark_code}",
+            "universe": f"{len(config.HOTSPOT_CODES)} 个行业/主题代表 ETF（逐只按自身走势排序）",
+            "decision_scope": "ETF自身价格、动量、均线和量能，不设宽基条件",
             "heat": config.HEAT_RULE,
             "share_flow": (
                 "相邻已保存收盘快照的份额差 × 最新收盘价（当日净申赎）；"
@@ -639,6 +632,8 @@ def build_hotspots(app: App) -> dict[str, Any]:
     """GET /api/hotspots：读取日终快照，用最新报价补价格/涨跌幅。"""
     payload = store.load_hotspots_latest()
     quotes, _fetched_at, _stale = _cached_quotes(app)
+    if payload and payload.get("rule_version")!=config.HOTSPOT_RULE_VERSION:
+        payload=compute_hotspot_payload(quotes)  # Local-only read; never relabel a legacy relative-strength snapshot.
     if not payload:
         return {
             "generated_at": store.iso_now(),
@@ -674,7 +669,7 @@ def build_hotspots(app: App) -> dict[str, Any]:
                 "basket": None,
             },
             "warnings": ["热点数据尚未生成"],
-            "method": {"universe": "等待采集", "benchmark": "等待采集"},
+            "method": {"universe": "等待采集", "decision_scope": "self_only"},
             "limitations": ["尚无数据时所有结论为空。"],
         }
     result = dict(payload)
@@ -692,7 +687,7 @@ def build_hotspots(app: App) -> dict[str, Any]:
                 item["name"] = quote["name"]
         rows.append(item)
     # 排名变化依赖历史快照，读取时用最新历史重算，避免日终计算顺序影响结果
-    changes = analytics.rank_changes(rows, store.load_hotspots_history(), payload.get("as_of"))
+    changes = analytics.rank_changes(rows, [h for h in store.load_hotspots_history() if h.get("rule_version")==config.HOTSPOT_RULE_VERSION], payload.get("as_of"))
     for row in rows:
         row["rank_change_5d"] = changes.get(str(row.get("code")))
     result["rows"] = rows
@@ -703,6 +698,7 @@ def build_hotspot_history(rows: Sequence[Mapping[str, Any]], as_of: str, moment:
     """生成要做历史对比的热点快照（供 rank_change_5d 使用）。"""
     return {
         "date": as_of,
+        "rule_version": config.HOTSPOT_RULE_VERSION,
         "generated_at": store.iso_now(),
         "rows": analytics.stock_rows_for_history(rows),
     }
@@ -711,15 +707,11 @@ def build_hotspot_history(rows: Sequence[Mapping[str, Any]], as_of: str, moment:
 def backfill_hotspot_history(quotes: Mapping[str, dict[str, Any]] | None = None, count: int = config.HOTSPOT_HISTORY_BACKFILL) -> int:
     """用本地日线回填热点历史排名（只补缺失日期，不覆盖已有快照）。"""
     quotes = quotes or {}
-    benchmark_code = analytics.select_largest_csi300(quotes, None)
-    benchmark_bars = store.load_bars(benchmark_code)
-    if not benchmark_bars:
-        return 0
-    dates = [str(bar.get("date")) for bar in benchmark_bars if bar.get("date")]
+    bars_by_code: dict[str, list[dict[str, Any]]] = {code: store.load_bars(code) for code in config.HOTSPOT_CODES}
+    dates = sorted({str(bar["date"]) for bars in bars_by_code.values() for bar in bars if bar.get("date")})
     targets = dates[-count:]
     existing = {str(item.get("date")) for item in store.load_hotspots_history(limit=config.HOTSPOT_HISTORY_KEEP)}
     written = 0
-    bars_by_code: dict[str, list[dict[str, Any]]] = {code: store.load_bars(code) for code in config.HOTSPOT_CODES}
     for date in targets:
         if date in existing:
             continue
@@ -727,11 +719,9 @@ def backfill_hotspot_history(quotes: Mapping[str, dict[str, Any]] | None = None,
         for code in config.HOTSPOT_CODES:
             entity = config.ENTITIES[code]
             bars = [bar for bar in bars_by_code.get(code, []) if str(bar.get("date")) <= date]
-            benchmark = [bar for bar in benchmark_bars if str(bar.get("date")) <= date]
             row = analytics.analyze_hotspot_row(
                 {"code": code, "name": entity.name, "direction": entity.direction, "group": entity.group},
                 bars,
-                _benchmark_ret20(benchmark),
                 {},
             )
             rows.append(row)

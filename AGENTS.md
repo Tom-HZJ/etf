@@ -9,3 +9,5 @@
 - Validate relevant backend tests and TypeScript/build. Use an isolated ETF_DATA directory for tests. Avoid starting multiple collectors on the same store.
 - Preserve the same-page research view, returning filters, search, scroll and focus.
 - Three-year rally anatomy is descriptive and separate from B/S: hindsight troughs/peaks must never become historical live signals. Keep fixed thresholds, complete equal follow-up in controls, per-field sample sizes and the listing/suspension evidence. Do not infer historical turnover from current shares.
+
+- All strategy paths are self-only. Never reinstate mandatory market/index/proxy filters without an explicit user request. Heat uses own momentum, not relative CSI300 performance. Price tickers and national-team fund flows are context only. Preserve prior version decision/evaluation records; historical recalculation must be labelled.

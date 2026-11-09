@@ -4,7 +4,7 @@ from collections import defaultdict
 import hashlib
 import json
 import statistics
-from . import config, coverage, research, store
+from . import config, research, store
 
 def outcomes(bars,signal_date,horizon):
     index=next((i for i,row in enumerate(bars) if row['date']==signal_date),None)
@@ -19,16 +19,12 @@ def outcomes(bars,signal_date,horizon):
 
 def build(moment=None):
     moment=moment or store.now();cutoff=research.completed_cutoff(moment)
-    bench,_=research.clean_bars(store.load_bars('sh000300'),cutoff)
-    if len(bench)<65:return {'state':'insufficient','rows':[],'generated_at':store.iso_now()}
-    first=bench[max(0,len(bench)-252)]['date']
-    base=research.market_regime(bench,cutoff)
-    base['_states']={r['date']:'supportive' if c['strong'] else 'cautious' for r,c in zip(bench,research._contexts(bench))}
-    events=[];values=defaultdict(list);incomplete=defaultdict(int)
+    starts=[];ends=[];events=[];values=defaultdict(list);incomplete=defaultdict(int)
     for code in config.HOTSPOT_CODES:
         e=config.ENTITIES[code];bars,bad=research.clean_bars(store.load_bars(code),cutoff)
-        if bad:continue
-        row=research.screen({'code':code,'name':e.name,'group':e.group,'direction':e.direction},bars,base,cutoff,collect_events=True)
+        if bad or len(bars)<65:continue
+        first=bars[max(0,len(bars)-252)]['date'];starts.append(first);ends.append(bars[-1]['date'])
+        row=research.screen({'code':code,'name':e.name,'group':e.group,'direction':e.direction},bars,cutoff,collect_events=True)
         for event in row.get('events',[]):
             if event['date']<first:continue
             item={'code':code,**event,'outcomes':{}}
@@ -50,9 +46,10 @@ def build(moment=None):
                              'positive_fraction':sum(v>0 for v in net)/len(net) if net else None,
                              'median_mfe':statistics.median(r['mfe'] for r in data) if data else None,
                              'median_mae':statistics.median(r['mae'] for r in data) if data else None})
-    return {'state':'research_only','as_of':bench[-1]['date'],'start':first,'generated_at':store.iso_now(),
+    return {'state':'research_only' if ends else 'insufficient','as_of':max(ends,default=None),'start':min(starts,default=None),'decision_scope':'self_only','external_reference_required':False,'generated_at':store.iso_now(),
             'rule_version':research.RULE_VERSION,'rows':rows,'events':events,
-            'notes':['使用当前代表ETF池与当前前复权历史，不是历史完整基金池或真正样本外检验',
+            'notes':['每只ETF只用自身最近252根可用日线的事件，不设任何宽基走势门槛',
+                     '使用当前代表ETF池与当前前复权历史，不是历史完整基金池或真正样本外检验',
                      '信号后下一交易日开盘作参考入场；单一价格无法判断可成交时保守排除',
                      '在入场后第5/10/20个交易日收盘复核，符合T+1时间约束，但不模拟止损、组合仓位或涨跌停撮合',
                      '成本为0/10/20/40基点往返敏感性假设，不是实际账户费率',

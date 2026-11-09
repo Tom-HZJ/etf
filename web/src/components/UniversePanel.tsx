@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { httpRequest } from '../api/http';
 import { useResource } from '../lib/hooks';
-interface Item {code:string;name:string;state:string;as_of:string|null;buy_confirmations:number;sell_confirmations:number;buy_references:number;sell_references:number;closed_trades:number;entry_cancellations:number;message:string;diagnostics:{ignored_while_holding?:number;benchmark_supportive_days?:number;benchmark_sessions?:number}}
+interface Item {code:string;name:string;state:string;as_of:string|null;buy_confirmations:number;sell_confirmations:number;buy_references:number;sell_references:number;closed_trades:number;entry_cancellations:number;message:string;diagnostics:{ignored_while_holding?:number;decision_scope?:string;own_sessions?:number}}
 interface Result {state:string;year:number;as_of:string|null;rows:Item[];summary:{total?:number;applicable?:number;separate_rules?:number;pending_data?:number;with_buy_references?:number;buy_confirmations?:number;closed_trades?:number;zero_trades?:number;one_trade?:number;multiple_trades?:number;entry_cancellations?:number};notes:string[];message?:string}
 const fetchUniverse=(signal?:AbortSignal)=>httpRequest<Result>('/api/research/universe',{signal});
 export function UniversePanel({refreshTick,onOpen}:{refreshTick:number;onOpen:(item:{code:string;name:string},origin:HTMLElement)=>void}):React.JSX.Element{
