@@ -24,6 +24,8 @@ Daily bars add `ma5`, `ma10`, `ma30` in `ma`, with past-only warm-up. `ma20` and
 
 ## Rolling three-year rally anatomy
 
+This is an internal analysis endpoint. Its retrospective study panels are not mounted on the research or market pages. The ordinary 3-year daily-chart range remains available. No study statistic is promoted into the original B/S strategy.
+
 `GET /api/research/rallies` returns coverage for every current ETF and descriptive summaries from fixed direction representatives. A same-direction representative is the first configured code, not selected for performance. `其他宽基` codes remain separate because they are not one index. `?code=sh512980` returns that ETF's phases, daily normalized close/MA series, stage values and controls. Reads use local atomic files only. All tracked prices/activity/listing fingerprints and the completed-close cutoff invalidate the cache; a concurrent source change yields `state=updating` with no mixed results.
 
 Window: last completed date minus three calendar years, with earlier warm-up. Source history before verified listing dates is excluded. Verified full-day suspensions remain absent and carry provider announcement URLs, never invented bars. Unknown missing dates pause phase computation for that ETF. The calendar uses stored exchange-index sessions; stale/incomplete calendars remain pending.

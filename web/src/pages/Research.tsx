@@ -5,7 +5,6 @@ import type { ResearchRow } from "../api/research";
 import { useResource } from "../lib/hooks";
 import type { ThemeMode } from '../lib/hooks';
 import { ErrorPanel, PanelSkeleton } from "../components/States";
-import { RallyPanel } from '../components/RallyPanel';
 import { UniversePanel } from '../components/UniversePanel';
 import { EvaluationPanel } from '../components/EvaluationPanel';
 const EmbeddedMarket = lazy(()=>import('./Market').then(module=>({default:module.MarketPage})));
@@ -178,7 +177,7 @@ export function ResearchPage({
             <section className="research-summary" aria-label="日线研究概览">
               {[
                 [
-                  "固定基准 · 沪深300",
+                  "现行规则参照 · 沪深300",
                   data.benchmark.state === "supportive"
                     ? "趋势支持"
                     : "谨慎观察",
@@ -212,7 +211,6 @@ export function ResearchPage({
               尚未通过样本外收益验证。参考收盘不是成交价；实际开盘、滑点、费用、T+1和跳空风险需另行记录。
             </div>
             <UniversePanel refreshTick={refreshTick} onOpen={openAsset}/>
-            <RallyPanel refreshTick={refreshTick} onOpen={openAsset}/>
             <div className="research-workspace">
               <section className="research-list">
                 <div className="research-tools">

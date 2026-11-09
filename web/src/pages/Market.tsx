@@ -1,5 +1,4 @@
 import { chartRange } from '../lib/chartRange';
-import { RallyPanel } from '../components/RallyPanel';
 import { HoldingsPanel } from '../components/HoldingsPanel';
 import { useStrategyReplay,ReplayControls,ReplayDetails } from '../components/ReplayPanel';
 import type { ReplayView } from '../components/ReplayPanel';
@@ -731,7 +730,6 @@ export function MarketPage({
           )}
 
           <ReplayDetails view={replay}/>
-          {(quote?.kind==='etf' || /^(sh5|sz1[56])/.test(selected)) ? <RallyPanel code={selected} refreshTick={refreshTick}/> : null}
 
           {(quote?.kind==='etf' || /^(sh5|sz1[56])/.test(selected)) ? <HoldingsPanel code={selected} refreshTick={refreshTick}/> : null}
 
