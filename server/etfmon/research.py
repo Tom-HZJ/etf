@@ -14,7 +14,7 @@ import math
 from datetime import datetime, timedelta
 from typing import Any, Mapping, Sequence
 
-from . import analytics, config, store, strategy
+from . import analytics, config, store, strategy, opportunities
 
 RULE_VERSION = strategy.ENTRY_VERSION
 PARAMETERS = strategy.PARAMETERS
@@ -70,7 +70,10 @@ def _contexts(data):
     return strategy.contexts(data)
 
 
-def screen(entity,bars,cutoff,heat=None,*,collect_events=False):
+def screen(entity,bars,cutoff,heat=None,*,collect_events=False,model='current'):
+    if model not in ('current','expanded'):raise ValueError('未知研究模型')
+    engine=opportunities if model=='expanded' else strategy
+    limits=engine.PARAMETERS
     data,bad=clean_bars(bars,cutoff);count=len(data)
     result={'code':entity['code'],'name':entity.get('name',entity['code']),
             'direction':entity.get('direction',''),'group':entity.get('group',''),'heat':heat,
@@ -90,11 +93,12 @@ def screen(entity,bars,cutoff,heat=None,*,collect_events=False):
         return {**result,'phase':'separate_rules','reason':'跨境或商品需独立研究，未套用本股票ETF规则'}
     if bad:return {**result,'phase':'invalid_data','reason':'自身OHLC存在异常，暂停确认，等待后台核对'}
     if count<25:return {**result,'phase':'history_short','reason':f'现有{count}根完整日线，准备观察至少25根，确认至少65根'}
-    scanned=strategy.scan(data);cs=scanned['contexts'];c=cs[-1];v=c['atr14'];close=data[-1]['close'];events=scanned['events'];state=scanned['state']
+    if model=='expanded':result.update(model_label=opportunities.LABEL,model_status='experimental_expanded')
+    scanned=engine.scan(data);cs=scanned['contexts'];c=cs[-1];v=c['atr14'];close=data[-1]['close'];events=scanned['events'];state=scanned['state']
     if collect_events:result['events']=events
     result.update(reference_close=close,ma5=c['ma5'],ma10=c['ma10'],ma20=c['ma20'],ma30=c['ma30'],ma60=c['ma60'],atr14=v,
                   trend_confirmed=c['fast'],evaluation_not_before=data[-1]['date']+'T15:10:00+08:00',
-                  preparation={'armed_date':state.get('watch_date'),'expires_after_sessions':5,'reset_on_own_structure_loss':True})
+                  preparation={'armed_date':state.get('armed_date') if model=='expanded' else state.get('watch_date'),'expires_after_sessions':5,'reset_on_own_structure_loss':True})
     if not v or v<=0:return result
     result['entry_distance_atr']=round((close-c['ma10'])/v,3)
     today=[e for e in events if e['date']==data[-1]['date']]
@@ -103,18 +107,22 @@ def screen(entity,bars,cutoff,heat=None,*,collect_events=False):
     result['price_event_date']=state.get('date') if state.get('today') else None
     result['paths']=[{'path':'breakout','label':'MA5/MA10首次转强','price_event_today':bool(state.get('today')),
                       'geometry_allowed':bool(today),'eligible':bool(today)}]
+    if model=='expanded':result['paths'][0]['label']='MA5/10交叉后的5日确认窗口'
     if today:
         e=today[0];risk=close-e['invalidation']
         return {**result,'phase':'triggered','eligible':True,'trigger_date':data[-1]['date'],
                 'invalidation_close':round(e['invalidation'],6),'risk_distance_atr':round(risk/v,3),
                 'risk_distance_pct':round(risk/close,5),'setup_date':e['setup_date'],
-                'reason':'自身MA5首次上穿MA10、MA10向上，位置与风险条件通过；下一交易日纸面观察，开盘仍须复核'}
-    prepare=state.get('watch_date') is not None and not state.get('episode_consumed') and result['entry_distance_atr']<=1.5
+                'reason':('自身MA5/10交叉后的5日窗口内，MA10向上、位置不超过2ATR、初始风险不超过3ATR；下一交易日开盘仍须复核' if model=='expanded' else '自身MA5首次上穿MA10、MA10向上，位置与风险条件通过；下一交易日纸面观察，开盘仍须复核')}
+    if model=='expanded' and state.get('armed_date'):
+        return {**result,'phase':'preparing','prealert':True,'setup_date':state['armed_date'],
+                'reason':'5/10日线已交叉，确认窗口含交叉当天共5个交易日；等待自身斜率、位置和风险条件通过，尚不是完整确认'}
+    prepare=state.get('watch_date') is not None and not state.get('episode_consumed') and result['entry_distance_atr']<=limits['extension_atr']
     if prepare:
         return {**result,'phase':'preparing','prealert':True,'setup_date':state['watch_date'],
                 'reason':'5/10日线出现早期转强变化，尚未形成合格交叉确认；仅供观察，准备窗口最多5个交易日'+('；确认仍需65根历史' if count<65 else '')}
-    if result['entry_distance_atr']>1.5:
-        return {**result,'phase':'extended','reason':'自身价格距MA10超过1.5ATR，暂不追认新确认点'}
+    if result['entry_distance_atr']>limits['extension_atr']:
+        return {**result,'phase':'extended','reason':f'自身价格距MA10超过{limits["extension_atr"]:g}ATR，暂不追认新确认点'}
     if last and sum(r['date']>last['date'] for r in data)<=10:
         return {**result,'phase':'tracking','reason':f'当前版本回算{last["date"]}曾满足确认；本轮不重复确认，结构失效后重新观察'}
     if count<65:return {**result,'phase':'history_short','reason':f'现有{count}根日线，尚不足65根完整历史；不补造上市前价格'}
@@ -128,7 +136,7 @@ def assess_position(position,bars,cutoff):
     return legacy_research.assess_position(position,bars,cutoff)
 
 
-def _build_payload(moment=None):
+def _build_payload(moment=None,model='current'):
     moment = moment or store.now(); cutoff = completed_cutoff(moment)
     rows = [];sources=set();collected=[];target=expected_close_date(moment)
     for code in config.HOTSPOT_CODES:
@@ -136,7 +144,7 @@ def _build_payload(moment=None):
         own_bars=store.load_bars(code)
         _,invalid=clean_bars(own_bars,cutoff)
         heat=None if invalid else analytics.analyze_hotspot_row({'code':code,'name':e.name,'direction':e.direction,'group':e.group},[b for b in own_bars if str(b.get('date',''))<=cutoff],{})['heat']
-        row=screen({'code': code, 'name': e.name, 'direction': e.direction, 'group': e.group},own_bars,cutoff,heat)
+        row=screen({'code': code, 'name': e.name, 'direction': e.direction, 'group': e.group},own_bars,cutoff,heat,model=model)
         if row['phase']!='separate_rules' and row.get('data_date') and row['data_date']<target:
             row.update(eligible=False,prealert=False,phase='stale',reason='该ETF自身完整日线未更新，暂停本ETF的新观察判断')
         rows.append(row)
@@ -147,10 +155,12 @@ def _build_payload(moment=None):
     rows.sort(key=lambda r: (not r['eligible'], not r['prealert'], r['phase'], -(r.get('heat') or 0)))
     usable=[r for r in rows if r['phase']!='separate_rules']
     stale=not any(r.get('data_date') and r['data_date']>=target for r in usable)
-    return {'generated_at': moment.isoformat(timespec='seconds'), 'rule_version': RULE_VERSION,
+    return {'generated_at': moment.isoformat(timespec='seconds'), 'model':model,'rule_version': opportunities.ENTRY_VERSION if model=='expanded' else RULE_VERSION,
+            'model_label':opportunities.LABEL if model=='expanded' else '较严入场 v4（研究）',
+            'model_warning':opportunities.WARNING if model=='expanded' else None,
             'mode': 'experimental_reconstruction','decision_scope':'self_only','external_reference_required':False,
             'as_of':max((r['data_date'] for r in usable if r.get('data_date')),default=None),
-            'sources':sorted(sources),'latest_collected_at':max(collected,default=None),'parameters': PARAMETERS,
+            'sources':sorted(sources),'latest_collected_at':max(collected,default=None),'parameters': opportunities.PARAMETERS if model=='expanded' else PARAMETERS,
             'data_stale': stale,
             'stale_count':sum(r['phase']=='stale' for r in usable),
             'rows': rows, 'candidate_count': sum(r['eligible'] for r in rows),
@@ -164,24 +174,25 @@ _CACHE_LOCK=threading.RLock()
 _CACHE_KEY=None
 _CACHE_PAYLOAD=None
 
-def _fingerprint(moment):
+def _fingerprint(moment,model='current'):
     paths=[store.bars_path(c) for c in config.HOTSPOT_CODES]
     stamps=[]
     for path in paths:
         try:
             st=path.stat();stamps.append((str(path),st.st_mtime_ns,st.st_size))
         except OSError:stamps.append((str(path),None,None))
-    return (str(config.data_dir()),completed_cutoff(moment),RULE_VERSION,tuple(stamps))
+    return (str(config.data_dir()),completed_cutoff(moment),RULE_VERSION,model,tuple(stamps))
 
-def build_payload(moment=None):
+def build_payload(moment=None,*,model='current'):
     global _CACHE_KEY,_CACHE_PAYLOAD
-    moment=moment or store.now();key=_fingerprint(moment)
+    if model not in ('current','expanded'):raise ValueError('未知研究模型')
+    moment=moment or store.now();key=_fingerprint(moment,model)
     with _CACHE_LOCK:
         if key==_CACHE_KEY and _CACHE_PAYLOAD is not None:
             payload=copy.deepcopy(_CACHE_PAYLOAD)
         else:
-            payload=_build_payload(moment)
-            if _fingerprint(moment)!=key:
+            payload=_build_payload(moment,model)
+            if _fingerprint(moment,model)!=key:
                 payload.update(data_stale=True,candidate_count=0,prealert_count=0)
                 for row in payload['rows']:row.update(eligible=False,prealert=False,phase='refreshing_data',reason='数据正在原子更新，下一次刷新后复核')
             else:_CACHE_KEY,_CACHE_PAYLOAD=key,copy.deepcopy(payload)
@@ -189,14 +200,14 @@ def build_payload(moment=None):
     return payload
 
 
-def record_close(moment=None):
+def record_close(moment=None,*,model='current'):
     """Append actual EOD decisions; never fabricate old live records on restart."""
     moment = moment or store.now(); local = moment.astimezone(config.SHANGHAI_TZ)
     if local.weekday() >= 5 or local.hour * 60 + local.minute < config.CLOSE_RECORD: return None
-    payload = build_payload(moment)
+    payload = build_payload(moment,model=model) if model!='current' else build_payload(moment)
     if payload['as_of'] != local.date().isoformat(): return None
     payload['mode'] = 'live_recorded'
     fingerprint = hashlib.sha256(json.dumps([payload['rule_version'], payload['rows']], sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
-    path = store.path_for('research', 'decisions', payload['as_of'], RULE_VERSION + '-' + fingerprint + '.json')
+    path = store.path_for('research', 'decisions', payload['as_of'], payload['rule_version'] + '-' + fingerprint + '.json')
     if not path.exists(): store.write_json(path, payload)
     return str(path.name)

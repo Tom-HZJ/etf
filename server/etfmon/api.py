@@ -220,7 +220,8 @@ def dispatch_get(app: views.App, path: str, query: Mapping[str, list[str]]) -> d
         return views.build_hotspots(app)
     if path == "/api/research":
         from . import research
-        return research.build_payload()
+        try:return research.build_payload(model=_first(query,'model') or 'current')
+        except ValueError as exc:raise ApiError(400,'bad_request',str(exc)) from exc
     if path == "/api/research/replay":
         from . import replay
         code = _parse_code(_first(query, "code"))

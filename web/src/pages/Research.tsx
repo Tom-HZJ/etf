@@ -6,6 +6,7 @@ import { useResource } from "../lib/hooks";
 import type { ThemeMode } from '../lib/hooks';
 import { ErrorPanel, PanelSkeleton } from "../components/States";
 import { EvaluationPanel } from '../components/EvaluationPanel';
+import {readReplayPreferences,saveReplayPreferences} from '../lib/replayDisplay';
 const EmbeddedMarket = lazy(()=>import('./Market').then(module=>({default:module.MarketPage})));
 const PHASES: Record<string, string> = {
   preparing:"准备阶段预警",tracking:"结构跟踪",await_setup:"等待新准备结构",history_short:"可用历史较短",invalid_data:"数据异常待补",refreshing_data:"数据更新中",
@@ -97,7 +98,8 @@ export function ResearchPage({
   refreshTick: number;
   mode:ThemeMode;
 }): React.JSX.Element {
-  const resource = useResource(fetchResearch, [refreshTick], {
+  const [researchModel,setResearchModel]=useState<'current'|'expanded'>(()=>{try{return readReplayPreferences(window.localStorage).model==='expanded'?'expanded':'current';}catch{return 'current';}});
+  const resource = useResource(signal=>fetchResearch(signal,researchModel), [refreshTick,researchModel], {
     pollMs: 60_000,
   });
   const [query, setQuery] = useState(""),
@@ -131,7 +133,11 @@ export function ResearchPage({
     if(window.matchMedia('(max-width:1000px)').matches)panel.scrollIntoView({block:'start',behavior:'auto'});
     panel.focus({preventScroll:true});
   },[selectionRequest]);
-  const data = resource.data;
+  const data = resource.data?.model===researchModel?resource.data:null;
+  function chooseModel(value:'current'|'expanded'){
+    setResearchModel(value);
+    try{saveReplayPreferences(window.localStorage,{...readReplayPreferences(window.localStorage),model:value,path:'combined'});}catch{/* Browser storage is optional. */}
+  }
   const rows =
     data?.rows.filter(
       (row) =>
@@ -151,6 +157,8 @@ export function ResearchPage({
           <p>
             提前观察5/10日线变化，交叉确认仍须核对自身位置与风险；旧结构失效后重新开始观察。
           </p>
+          <label>研究模型 <select className="fund-select" value={researchModel} onChange={event=>chooseModel(event.target.value as 'current'|'expanded')}><option value="expanded">扩展机会 v5 · 风险较高</option><option value="current">较严入场 v4 对照</option></select></label>
+          {researchModel==='expanded'?<p className="text-[var(--etf-amber)]">交叉后5日内继续等待确认，位置上限2ATR、结构风险上限3ATR。机会更多，但已观察历史中的亏损、回撤与回吐均高于v4；由你决定是否交易。</p>:null}
           {data ? (
             <div id="research-status" role="status">
               日线截至 {data.as_of ?? "—"} ·{" "}
@@ -158,7 +166,7 @@ export function ResearchPage({
                 ? "数据待补齐，已暂停候选判断"
                 : "历史数据重算 · 研究假设"}{" "}
               · {data.sources.join(" / ") || "—"} · 最近采集{" "}
-              {data.latest_collected_at ?? "—"} · 独立研究模型 v4{data.stale_count ? ` · ${data.stale_count}只自身数据待更新` : ""}
+              {data.latest_collected_at ?? "—"} · {data.model_label}{data.stale_count ? ` · ${data.stale_count}只自身数据待更新` : ""}
             </div>
           ) : null}
         </header>
@@ -299,14 +307,14 @@ export function ResearchPage({
             </div>
           </>
         )}
-        <EvaluationPanel refreshTick={refreshTick}/>
+        {researchModel==='current'?<EvaluationPanel refreshTick={refreshTick}/>:null}
         <details className="research-method">
           <summary>规则与数据口径</summary>
           <p>
-            每只ETF独立判断：v4以MA5首次上穿MA10、MA10向上且收盘在MA10之上确认早期转强；MA30仅作背景。收盘距MA10须在0至1.5ATR，初始风险不超过2ATR；下一交易日开盘再次复核，超界取消。准备窗口最多5个交易日，结构失效即重置，旧标记不跨行情延续。卖出使用1R后利润保护、1.5R阶段目标、两日低于MA10、5日无延续或10日复核。只使用15:10后完整日线，不设任何宽基门槛。历史已用于研究，单笔中位结果仍为负，收益有集中性；这些阈值仍是假设，不是已验证盈利策略。
+            每只ETF独立判断：v4须在MA5首次上穿MA10当天通过条件；扩展v5保留含当天共5个交易日的确认窗口。两者均要求确认时MA10向上、收盘在MA10之上；MA30仅作背景。v4距MA10最多1.5ATR、初始风险最多2ATR；扩展v5分别放宽为2ATR和3ATR，下一交易日开盘仍重查。结构失效或窗口到期即重置，同一窗口不重复确认。卖出保持1R后利润保护、1.5R阶段目标、两日低于MA10、5日无延续或10日复核。只使用15:10后完整日线，不设任何宽基门槛。历史已用于研究，更多信号不等于更高收益。
           </p>
           <p>
-            跨境与商品ETF分开处理。当前页面是按现有历史数据重算；部署后的日终采集追加带真实记录时间的观察档案，不补造历史“当时已知”信号。不接交易账户、不自动下单。不使用最新份额反推的国家队合成K线来评估入场。尚无独立交易所假日日历，缺完整基准日线时保守暂停。
+            跨境与商品ETF分开处理。当前页面是按现有历史数据重算；部署后的日终采集追加带真实记录时间的观察档案，不补造历史“当时已知”信号。不接交易账户、不自动下单。不使用最新份额反推的国家队合成K线来评估入场。尚无独立交易所假日日历，需核对该ETF自身最新完整交易日。
           </p>
           <p>
             后台报价约20秒轮询，分钟接口缓存约60秒；这不等于数据源具有同等实时性保障。更新时间以页面真实来源日期和时间为准。
@@ -316,7 +324,7 @@ export function ResearchPage({
     </div>
     {openedAsset?<section className="research-asset-view" aria-labelledby="research-asset-title">
       <header className="research-asset-view-head">
-        <button ref={backRef} type="button" className="asset-back" onClick={()=>{restoringList.current=true;setOpenedAsset(null);}}>← 返回观察清单</button>
+        <button ref={backRef} type="button" className="asset-back" onClick={()=>{try{setResearchModel(readReplayPreferences(window.localStorage).model==='expanded'?'expanded':'current');}catch{/* Keep current selection. */}restoringList.current=true;setOpenedAsset(null);}}>← 返回观察清单</button>
         <div><h1 id="research-asset-title">{openedAsset.name} · 行情与持仓</h1><p>{openedAsset.code} · 当前研究页内查看</p></div>
       </header>
       <Suspense fallback={<PanelSkeleton rows={3} chart/>}><EmbeddedMarket key={openedAsset.code} mode={mode} refreshTick={refreshTick} initialCode={openedAsset.code} embedded/></Suspense>

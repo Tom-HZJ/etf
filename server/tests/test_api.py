@@ -728,7 +728,7 @@ class ApiTest(unittest.TestCase):
 
 
     def test_replay_model_selection_preserves_versions(self) -> None:
-        for model,version in [('current','self-early-turn-v4/protected-bite-v2'),('legacy','self-trend-two-paths-v3/close-exit-v1')]:
+        for model,version in [('current','self-early-turn-v4/protected-bite-v2'),('expanded','self-cross-window-v5/protected-bite-v2'),('legacy','self-trend-two-paths-v3/close-exit-v1')]:
             status,payload=self.json_get('/api/research/replay?code=sh512480&model='+model)
             self.assertEqual(status,200);self.assertEqual(payload['model'],model)
             self.assertEqual(payload['rule_version'],version);self.assertFalse(payload['external_reference_required'])

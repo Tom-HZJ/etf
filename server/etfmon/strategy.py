@@ -70,8 +70,9 @@ def scan(data,mode=ENTRY_MODE):
               'today':today,'fast':c['fast'],'strong':c['strong']}
     return {'contexts':cs,'events':events,'state':last or {}}
 
-def simulate(bars,cs,events,year,cost_bps=20,exit_mode=EXIT_MODE,*,start=None,end=None):
+def simulate(bars,cs,events,year,cost_bps=20,exit_mode=EXIT_MODE,*,start=None,end=None,entry_limits=None):
     if exit_mode not in ('bite_1_5R_10','protected_bite_1_5R_10'):raise ValueError('Unknown exit mode')
+    limits=entry_limits or PARAMETERS
     by_date={}
     for event in events:by_date.setdefault(event['date'],event)
     signals=[];fills=[];trades=[];cancelled=[];position=None;pending=None
@@ -85,7 +86,7 @@ def simulate(bars,cs,events,year,cost_bps=20,exit_mode=EXIT_MODE,*,start=None,en
             signal=pending;pending=None;op=row['open']
             if signal['side']=='buy':
                 prev=cs[i-1];stop=signal['invalidation'];v=prev['atr14'];ma=prev['ma10']
-                if not v or not ma or not (0<=op-ma<=1.5*v and 0<op-stop<=2*v):
+                if not v or not ma or not (0<=op-ma<=limits['extension_atr']*v and 0<op-stop<=limits['maximum_risk_atr']*v):
                     signal['status']='cancelled';cancelled.append({'date':row['date'],'signal_date':signal['date'],'reason':'开盘超出此前MA10位置/初始风险边界，取消模拟开仓'})
                 else:
                     risk=op-stop

@@ -6,9 +6,10 @@ from __future__ import annotations
 import copy
 from datetime import date
 import threading
-from . import config,research,store,strategy
+from . import config,research,store,strategy,opportunities
 
 VERSION=research.RULE_VERSION+'/'+strategy.EXIT_VERSION
+EXPANDED_VERSION=opportunities.ENTRY_VERSION+'/'+opportunities.EXIT_VERSION
 _CACHE={};_LOCK=threading.RLock()
 NOTES=['历史回算，非当时实发信号；年初空仓、单ETF纸面模型，不接账户、不下单',
        'v4仅用自身MA5/10首次交叉、MA10斜率、位置和ATR风险；MA30仅作背景，不设宽基条件',
@@ -23,42 +24,47 @@ def simulate(bars,contexts,events,year,cost_bps=20):
     return strategy.simulate(bars,contexts,events,year,cost_bps)
 
 
-def _build(code,path,cutoff,cost_bps,moment):
+def _build(code,path,cutoff,cost_bps,moment,model='current'):
+    expanded=model=='expanded';engine=opportunities if expanded else strategy
     completed=research.completed_cutoff(moment);requested=cutoff or completed;year=moment.astimezone(config.SHANGHAI_TZ).year
     raw=store.load_bars(code)
     all_bars,_=research.clean_bars(raw,completed)
     data,bad=research.clean_bars(raw,requested)
     result={'code':code,'name':config.entity_name(code),'year':year,'requested_cutoff':requested,'as_of':None,'generated_at':store.iso_now(),
-            'rule_version':VERSION,'model':'current','model_label':'转强与阶段退出 v4（研究）','model_status':'experimental','decision_scope':'self_only','external_reference_required':False,'path':path,'cost_bps':cost_bps,'state':'insufficient','signals':[],'executions':[],'trades':[],
+            'rule_version':EXPANDED_VERSION if expanded else VERSION,'model':model,'model_label':opportunities.LABEL if expanded else '转强与阶段退出 v4（研究）','model_status':'experimental_expanded' if expanded else 'experimental','decision_scope':'self_only','external_reference_required':False,'path':path,'cost_bps':cost_bps,'state':'insufficient','signals':[],'executions':[],'trades':[],
             'cancelled':[],'position':None,'pending':None,'equity_curve':[],'summary':{},'notes':NOTES,
             'available_dates':[r['date'] for r in all_bars if r['date'].startswith(str(year))],
             'source':{k:store.load_bars_payload(code).get(k) for k in ['source','updated_at','adjustment']}}
+    result['entry_limits']={k:engine.PARAMETERS[k] for k in ('extension_atr','maximum_risk_atr','setup_lookback')}
+    if expanded:
+        result['model_warning']=opportunities.WARNING
+        result['notes']=[NOTES[0],'MA5首次上穿MA10后含当天共5个交易日内确认，MA10向上且收盘在MA10上；距MA10不超过2ATR，初始风险不超过3ATR',*NOTES[2:6],opportunities.WARNING,NOTES[-1]]
     if not config.is_etf_code(code):return {**result,'state':'unsupported','message':'当前进出规则仅研究境内股票ETF，不直接套用个股和指数'}
     if bad:return {**result,'state':'invalid_data','message':'日线异常，已暂停进出点计算，后台会检查补数'}
     if not data:return {**result,'message':'尚无该ETF的完整日线'}
     common=data[-1]['date']
     if len(data)<65:return {**result,'as_of':common,'message':'计算准备和进出条件至少需要65根完整日线，不补造上市前价格'}
     entity=config.ENTITIES.get(code);info={'code':code,'name':config.entity_name(code),'group':getattr(entity,'group',''),'direction':getattr(entity,'direction','')}
-    screened=research.screen(info,data,common,collect_events=True)
+    screened=research.screen(info,data,common,collect_events=True,model=model)
     if screened['phase']=='separate_rules':return {**result,'as_of':common,'state':'unsupported','message':screened['reason']}
     events=[e for e in screened.get('events',[]) if path=='combined' or e['path']==path]
-    model=simulate(data,research._contexts(data),events,year,cost_bps)
+    simulation=engine.simulate(data,research._contexts(data),events,year,cost_bps)
     event_dates={e['date'] for e in events if e['date'].startswith(str(year))}
-    buy_dates={s['date'] for s in model['signals'] if s['side']=='buy'}
+    buy_dates={s['date'] for s in simulation['signals'] if s['side']=='buy'}
     diagnostics={'qualified_buy_dates':len(event_dates),'buy_confirmations':len(buy_dates),
-                 'buy_references':sum(f['side']=='buy' for f in model['executions']),
-                 'sell_references':sum(f['side']=='sell' for f in model['executions']),
-                 'entry_cancellations':len(model['cancelled']),
+                 'buy_references':sum(f['side']=='buy' for f in simulation['executions']),
+                 'sell_references':sum(f['side']=='sell' for f in simulation['executions']),
+                 'entry_cancellations':len(simulation['cancelled']),
                  'ignored_while_holding':len(event_dates-buy_dates),
                  'decision_scope':'self_only',
                  'own_sessions':sum(r['date'].startswith(str(year)) for r in data)}
-    return {**result,**model,'as_of':common,'state':'research_only','current_phase':screened['phase'],
+    return {**result,**simulation,'as_of':common,'state':'research_only','current_phase':screened['phase'],
             'diagnostics':diagnostics,
             'current_reason':screened['reason'],'current_prealert':screened['prealert'],
             'message':'历史回算；完整信号与次日开盘参考分开，不预填未来价格'}
 
 def build_payload(code,path='combined',cutoff=None,cost_bps=20,moment=None,*,model='current'):
-    if model not in ('current','legacy'):raise ValueError('未知模型')
+    if model not in ('current','expanded','legacy'):raise ValueError('未知模型')
     if model=='legacy':
         from . import legacy_replay
         result=legacy_replay.build_payload(code,path,cutoff,cost_bps,moment)
@@ -75,11 +81,11 @@ def build_payload(code,path='combined',cutoff=None,cost_bps=20,moment=None,*,mod
             p=store.bars_path(symbol)
             try:s=p.stat();stamps.append((s.st_mtime_ns,s.st_size))
             except OSError:stamps.append(None)
-        return (str(config.data_dir()),code,path,cutoff,cost_bps,limit,VERSION,tuple(stamps))
+        return (str(config.data_dir()),code,path,cutoff,cost_bps,limit,VERSION,model,tuple(stamps))
     key=fingerprint()
     with _LOCK:
         if key in _CACHE:return copy.deepcopy(_CACHE[key])
-        result=_build(code,path,cutoff,cost_bps,moment)
+        result=_build(code,path,cutoff,cost_bps,moment,model)
         if fingerprint()!=key:return {**result,'state':'updating','signals':[],'executions':[],'trades':[],
                                      'position':None,'pending':None,'equity_curve':[],'summary':{},'diagnostics':{},
                                      'message':'来源正在更新，请稍后刷新'}

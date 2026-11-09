@@ -32,9 +32,9 @@ test('malformed, blocked and quota-limited storage never prevents chart use',()=
   assert.doesNotThrow(()=>saveReplayPreferences(blocked,{model:'current',path:'combined',markers:'executions',cost:20}));
   assert.deepEqual(readReplayPreferences(),defaults);
 });
-test('an empty qualified model is distinguished from loading and can explicitly compare legacy',()=>{
+test('an empty qualified model can explicitly inspect wider opportunities',()=>{
   const result=describeReplayMarkers(replay(),opts);
-  assert.equal(result.kind,'no-signals');assert.equal(result.action,'legacy');assert.match(result.text,/2026-11-09/);
+  assert.equal(result.kind,'no-signals');assert.equal(result.action,'expanded');assert.match(result.text,/2026-11-09/);
   assert.equal(describeReplayMarkers(replay({model:'legacy'}),opts).action,undefined);
 });
 test('cancelled or pending confirmations are not reported as no signals',()=>{
@@ -66,4 +66,10 @@ test('visible and year counts separate confirmations from hypothetical execution
   assert.equal(result.kind,'visible');assert.match(result.text,/当前区间1个模拟开盘点/);assert.match(result.text,/买入1次 \/ 卖出1次/);
   const confirmations=describeReplayMarkers(data,{...opts,markers:'signals',visibleDates:new Set(['2026-04-16'])});
   assert.equal(confirmations.kind,'visible');assert.match(confirmations.text,/1个收盘确认点/);
+});
+
+test('expanded choices persist and cannot retain an invisible legacy path',()=>{
+  assert.deepEqual(normalizeReplayPreferences({model:'expanded',path:'pullback',markers:'signals',cost:10}),{model:'expanded',path:'combined',markers:'signals',cost:10});
+  const display=describeReplayMarkers(replay({model:'expanded',signals:[buy],executions:[buy]}),opts);
+  assert.match(display.text,/扩展机会 v5/);
 });
