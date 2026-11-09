@@ -30,7 +30,7 @@ export function ReplayControls({view,onDaily}:{view:ReplayView;onDaily:()=>void}
    <button className="asset-back" onClick={()=>{view.setPlaying(false);view.setCutoff('');onDaily();}}>回到最新</button>
   </div>
   {dates.length?<label className="replay-cursor">回放日期 <input aria-label="回放交易日" type="range" min={0} max={dates.length-1} value={index} onChange={e=>{view.setPlaying(false);view.setCutoff(dates[Number(e.target.value)]);onDaily();}}/><output>{dates[index]}</output></label>:null}
-  <p>日K显示 MA5 / MA10 / MA30；信号规则仍使用已标版本的 MA20 / MA60、ATR 和基准门槛，未随显示均线暗改。</p>
+  <p>日K可选择近3年价格，B/S回放仍只计算今年。显示 MA5 / MA10 / MA30；信号规则仍使用已标版本的 MA20 / MA60、ATR 和基准门槛，未随显示均线暗改。</p>
   <p role="status">{view.resource.status==='error'?'策略暂不可用，稍后自动重试':view.resource.status==='loading'?'正在计算，图表暂显示最近完成的结果':data?.message??'正在读取策略'}。B/S 为收盘确认；B开/S开为次日开盘模拟参考。日K显示标记，未来价格留白。</p>
  </div>;
 }

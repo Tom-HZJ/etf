@@ -12,6 +12,8 @@
 - 退出条件包含结构失效、2ATR跟踪退出、连续两日低于MA20、5日无延续及20日复核。日线确认后下一交易日开盘仅作模拟参考，开盘超出此前风险边界取消开仓。
 - 每只 ETF 的季度股票前十持仓及修订版本独立保存；后台每日检查当前年和上一年，失败退避重试。
 - 自动核对年内日线日期、历史暖机、缺口及复权冲突；上交所清算后份额与全篮子估算流量分开记录。
+- 日K可选择近3年；后台每日增量检查日成交额与源换手率，每周复核三年完整区间。价格与量能分开存储，保留修订，不用最新份额反推历史换手。
+- 三年上涨阶段复盘：逐只ETF、固定方向代表汇总、MA5/10/20/30转强时机、阶段量能与换手，以及同一MA20启动锚点后的达标/未达标对照。事后低点、峰值与原策略B/S分开。
 
 ## 本地运行
 
@@ -56,5 +58,13 @@ Windows 可分别设置同名环境变量再执行命令。本仓库不包含依
 - 免费公开行情接口没有实时性SLA，使用者须核对来源与授权范围。历史重算不等于当时实发记录。
 
 数据适配器位于 `server/etfmon/sources.py`、`holdings.py`、`share_history.py`；策略与回放位于 `research.py`、`replay.py`。图表使用 [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts)，组件使用 [Meta Astryx](https://github.com/meta/astryx)，依赖遵循各自许可证。
+
+三年量能与覆盖维护位于 `history.py`，描述研究位于 `rallies.py`。如需在本地复算（只读现有数据，不发起行情请求）：
+
+```sh
+ETF_DATA=/path/to/data python3 scripts/analyze_three_years.py --out /path/to/analysis
+```
+
+输出字段级覆盖、阶段和对照CSV及JSON。详细定义见 [API口径](docs/API.md)。
 
 需要自托管时可将构建后的静态文件放在受保护的反向代理后，后端保持回环监听。`ETF_AUTH_MODE=forward` 仅用于可信反代注入身份的已有认证部署，不能直接公开服务。

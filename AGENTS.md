@@ -8,3 +8,4 @@
 - Never commit data, account/session files, secrets, local backup/release archives, dependencies or production hosts. Use environment variables for deployment-specific values.
 - Validate relevant backend tests and TypeScript/build. Use an isolated ETF_DATA directory for tests. Avoid starting multiple collectors on the same store.
 - Preserve the same-page research view, returning filters, search, scroll and focus.
+- Three-year rally anatomy is descriptive and separate from B/S: hindsight troughs/peaks must never become historical live signals. Keep fixed thresholds, complete equal follow-up in controls, per-field sample sizes and the listing/suspension evidence. Do not infer historical turnover from current shares.

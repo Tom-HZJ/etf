@@ -234,6 +234,11 @@ def dispatch_get(app: views.App, path: str, query: Mapping[str, list[str]]) -> d
     if path == "/api/research/universe":
         from . import universe
         return universe.build_payload()
+    if path == "/api/research/rallies":
+        from . import rallies
+        code = _parse_code(_first(query,'code')) if _first(query,'code') else None
+        try:return rallies.build_payload(code)
+        except ValueError as exc:raise ApiError(400,'bad_request',str(exc)) from exc
     if path == "/api/research/evaluation":
         return store.read_json(store.path_for('research','evaluation-latest.json'),
                                {'state':'pending','rows':[],'notes':['后台会在完整日线到齐后自动生成事件复核']})

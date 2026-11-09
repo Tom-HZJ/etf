@@ -13,7 +13,7 @@ from pathlib import Path
 
 # ---------------------------------------------------------------- 版本与标识
 
-APP_VERSION = "2.8.0"
+APP_VERSION = "2.9.0"
 PRODUCT = "ETF 观察台"
 BUILT_AT = "2026-11-09"
 SCHEMA_VERSION = 1

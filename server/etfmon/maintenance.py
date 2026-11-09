@@ -2,7 +2,7 @@
 from __future__ import annotations
 import threading
 import time
-from . import coverage, holdings, sources, store, share_history, evaluation
+from . import coverage, holdings, sources, store, share_history, evaluation, history
 
 _RUN_LOCK=threading.Lock()
 
@@ -43,6 +43,8 @@ def run_due(write_lock,stop=None,force=False):
                 else:time.sleep(.3)
             if index%10==0:
                 state.update(phase='coverage',done=index+1,errors=errors[-20:]);store.write_json(path,state)
+        state.update(phase='history_three_years');store.write_json(path,state)
+        if not stop or not stop.is_set():state['history_three_years']=history.run_due(write_lock,stop)
         state.update(phase='holdings',done=0,total_funds=len(coverage.etf_codes()));store.write_json(path,state)
         checked=0;updated=0
         for code in coverage.etf_codes():
