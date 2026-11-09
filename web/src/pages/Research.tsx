@@ -5,6 +5,7 @@ import type { ResearchRow } from "../api/research";
 import { useResource } from "../lib/hooks";
 import type { ThemeMode } from '../lib/hooks';
 import { ErrorPanel, PanelSkeleton } from "../components/States";
+import { UniversePanel } from '../components/UniversePanel';
 import { EvaluationPanel } from '../components/EvaluationPanel';
 const EmbeddedMarket = lazy(()=>import('./Market').then(module=>({default:module.MarketPage})));
 const PHASES: Record<string, string> = {
@@ -38,7 +39,7 @@ function groupFor(row:ResearchRow):Filter {
 }
 const price = (v: number | null | undefined): string =>
   typeof v === "number" && Number.isFinite(v) ? v.toFixed(3) : "—";
-function Detail({ row,panelRef,onBack,onOpen }: { row: ResearchRow | undefined;panelRef:RefObject<HTMLElement|null>;onBack?:()=>void;onOpen:(row:ResearchRow,origin:HTMLElement)=>void }): React.JSX.Element {
+function Detail({ row,panelRef,onBack,onOpen }: { row: ResearchRow | undefined;panelRef:RefObject<HTMLElement|null>;onBack?:()=>void;onOpen:(row:Pick<ResearchRow,'code'|'name'>,origin:HTMLElement)=>void }): React.JSX.Element {
   if (!row)
     return (
       <aside className="research-detail" id="research-detail-panel" ref={panelRef}>
@@ -106,11 +107,11 @@ export function ResearchPage({
     [selected, setSelected] = useState<string | null>(null);
   const [selectionRequest,setSelectionRequest]=useState(0);
   const detailRef=useRef<HTMLElement>(null),lastExplainButton=useRef<HTMLButtonElement|null>(null);
-  const [openedAsset,setOpenedAsset]=useState<ResearchRow|null>(null);
+  const [openedAsset,setOpenedAsset]=useState<Pick<ResearchRow,'code'|'name'>|null>(null);
   const tableRef=useRef<HTMLDivElement>(null),backRef=useRef<HTMLButtonElement>(null);
   const returnPosition=useRef({pageY:0,tableTop:0,tableLeft:0,origin:null as HTMLElement|null});
   const restoringList=useRef(false);
-  function openAsset(row:ResearchRow,origin:HTMLElement){
+  function openAsset(row:Pick<ResearchRow,'code'|'name'>,origin:HTMLElement){
     returnPosition.current={pageY:window.scrollY,tableTop:tableRef.current?.scrollTop??0,tableLeft:tableRef.current?.scrollLeft??0,origin};
     setSelected(row.code);setOpenedAsset(row);
   }
@@ -209,6 +210,7 @@ export function ResearchPage({
               研究假设 ·
               尚未通过样本外收益验证。参考收盘不是成交价；实际开盘、滑点、费用、T+1和跳空风险需另行记录。
             </div>
+            <UniversePanel refreshTick={refreshTick} onOpen={openAsset}/>
             <div className="research-workspace">
               <section className="research-list">
                 <div className="research-tools">

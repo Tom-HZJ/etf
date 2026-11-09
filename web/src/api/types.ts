@@ -335,7 +335,7 @@ export interface BarsResponse {
   adjustment: 'qfq' | 'none';
   quote: Quote | null;
   bars: Bar[];
-  ma: { ma20: { date: string; value: number }[]; ma60: { date: string; value: number }[] };
+  ma: { ma5?:{date:string;value:number}[];ma10?:{date:string;value:number}[];ma30?:{date:string;value:number}[];ma20: { date: string; value: number }[]; ma60: { date: string; value: number }[] };
   stats: {
     change: number | null;
     change_label: string;

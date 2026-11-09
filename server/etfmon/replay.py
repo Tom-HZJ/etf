@@ -102,7 +102,18 @@ def _build(code,path,cutoff,cost_bps,moment):
     if screened['phase']=='separate_rules':return {**result,'as_of':common,'state':'unsupported','message':screened['reason']}
     events=[e for e in screened.get('events',[]) if path=='combined' or e['path']==path]
     model=simulate(data,research._contexts(data),events,year,cost_bps)
+    event_dates={e['date'] for e in events if e['date'].startswith(str(year))}
+    buy_dates={s['date'] for s in model['signals'] if s['side']=='buy'}
+    benchmark_year=[(r,c) for r,c in zip(bench,research._contexts(bench)) if r['date'].startswith(str(year))]
+    diagnostics={'qualified_buy_dates':len(event_dates),'buy_confirmations':len(buy_dates),
+                 'buy_references':sum(f['side']=='buy' for f in model['executions']),
+                 'sell_references':sum(f['side']=='sell' for f in model['executions']),
+                 'entry_cancellations':len(model['cancelled']),
+                 'ignored_while_holding':len(event_dates-buy_dates),
+                 'benchmark_supportive_days':sum(c['strong'] for _,c in benchmark_year),
+                 'benchmark_sessions':len(benchmark_year)}
     return {**result,**model,'as_of':common,'state':'research_only','current_phase':screened['phase'],
+            'diagnostics':diagnostics,
             'current_reason':screened['reason'],'current_prealert':screened['prealert'],
             'message':'历史回算；完整信号与次日开盘参考分开，不预填未来价格'}
 
@@ -124,7 +135,9 @@ def build_payload(code,path='combined',cutoff=None,cost_bps=20,moment=None):
     with _LOCK:
         if key in _CACHE:return copy.deepcopy(_CACHE[key])
         result=_build(code,path,cutoff,cost_bps,moment)
-        if fingerprint()!=key:return {**result,'state':'updating','signals':[],'executions':[],'trades':[],'message':'来源正在更新，请稍后刷新'}
+        if fingerprint()!=key:return {**result,'state':'updating','signals':[],'executions':[],'trades':[],
+                                     'position':None,'pending':None,'equity_curve':[],'summary':{},'diagnostics':{},
+                                     'message':'来源正在更新，请稍后刷新'}
         if len(_CACHE)>=24:_CACHE.pop(next(iter(_CACHE)))
         _CACHE[key]=copy.deepcopy(result)
         return result

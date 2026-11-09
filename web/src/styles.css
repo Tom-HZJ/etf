@@ -44,6 +44,7 @@
   --etf-gold: #d9b36a;
   --etf-gold-soft: rgba(217, 179, 106, 0.12);
   --etf-cyan: #7bd0e2;
+  --etf-violet: #bba6ff;
   --etf-cyan-soft: rgba(123, 208, 226, 0.12);
   --etf-amber: #e8b35c;
 
@@ -110,6 +111,7 @@ html[data-theme="light"] {
   --etf-down: #08795f;
   --etf-gold: #8a6520;
   --etf-cyan: #13768b;
+  --etf-violet: #7650b6;
   --etf-grid: rgba(20, 32, 46, 0.045);
   --etf-shadow: 0 20px 44px -38px rgba(13, 23, 33, 0.4);
   --etf-focus: #8a6520;
@@ -2279,7 +2281,7 @@ html[data-theme="light"] .mobilebar {
 .research-page tr[aria-selected="true"] {
   background: rgba(196, 169, 99, 0.08);
 }
-.research-page td button:not(.research-detail-button):not(.research-name) {
+.research-page td button:not(.research-detail-button):not(.research-name):not(.universe-name) {
   border: 0;
   background: none;
   text-align: left;
@@ -2582,3 +2584,16 @@ html[data-theme="light"] .mobilebar {
 .replay-cursor output { font:12px var(--etf-font-mono); }
 .replay-controls p { font-size:11px; line-height:1.8; color:var(--etf-muted); margin-top:10px; }
 @media(max-width:640px){ .replay-actions {gap:8px;} .replay-cursor {gap:8px;} .replay-actions label {flex-wrap:wrap;} }
+
+.universe-panel { margin:0 0 24px; padding:18px 20px; border:1px solid var(--etf-line); border-radius:10px; background:var(--etf-surface); color:var(--etf-ink-2); font-size:12px; }
+.universe-head { display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px; margin-bottom:10px; }
+.universe-head h2 { color:var(--etf-ink); font-size:16px; font-weight:550; }
+.universe-head span,.universe-notes { color:var(--etf-muted); font-size:11px; }
+.universe-panel summary { min-height:44px; cursor:pointer; padding:12px 0; color:var(--etf-ink); }
+.universe-search { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
+.universe-search input { min-height:44px; margin-left:10px; max-width:180px; padding:8px; border:1px solid var(--etf-line-strong); border-radius:6px; background:var(--etf-bg-elev); }
+.universe-panel .fund-table { min-width:790px; }
+.universe-name { display:block; min-height:44px; padding:4px 0; text-align:left; background:none; border:0; cursor:pointer; }
+.universe-name strong { text-decoration:underline; text-underline-offset:4px; }
+.universe-panel td.universe-explanation { max-width:260px; white-space:normal; text-align:left; }
+.universe-notes p { margin-top:8px; line-height:1.8; }
