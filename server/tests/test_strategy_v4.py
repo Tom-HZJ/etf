@@ -37,6 +37,11 @@ class V4Entries(unittest.TestCase):
  def test_window_expires_and_own_structure_loss_clears_episode_state(self):
   b=bars([10.]*70+[9.8]*3+[9.9,10.,10.1,10.2]+[9.]*8)
   state=strategy.scan(b)['state'];self.assertIsNone(state['armed_date']);self.assertFalse(state['episode_consumed'])
+ def test_continuous_nearness_does_not_renew_an_expired_prealert(self):
+  b=bars([10.+.001*i for i in range(100)])
+  state=strategy.scan(b)['state'];self.assertIsNone(state['watch_date'])
+  r=research.screen({'code':'sh512480'},b,b[-1]['date'])
+  self.assertFalse(r['prealert']);self.assertIsNone(r['preparation']['armed_date'])
  def test_anchor_is_own_ma10_and_no_external_reference_is_required(self):
   b=bars([10.]*70+[9.8]*3+[9.9,10.,10.1,10.2]);r=research.screen({'code':'sh512480'},b,b[-1]['date'])
   self.assertTrue(r['eligible']);self.assertEqual(r['entry_anchor'],'MA10');self.assertFalse(r['external_reference_required'])

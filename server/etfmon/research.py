@@ -94,7 +94,7 @@ def screen(entity,bars,cutoff,heat=None,*,collect_events=False):
     if collect_events:result['events']=events
     result.update(reference_close=close,ma5=c['ma5'],ma10=c['ma10'],ma20=c['ma20'],ma30=c['ma30'],ma60=c['ma60'],atr14=v,
                   trend_confirmed=c['fast'],evaluation_not_before=data[-1]['date']+'T15:10:00+08:00',
-                  preparation={'armed_date':state.get('armed_date'),'expires_after_sessions':5,'reset_on_own_structure_loss':True})
+                  preparation={'armed_date':state.get('watch_date'),'expires_after_sessions':5,'reset_on_own_structure_loss':True})
     if not v or v<=0:return result
     result['entry_distance_atr']=round((close-c['ma10'])/v,3)
     today=[e for e in events if e['date']==data[-1]['date']]
@@ -109,10 +109,9 @@ def screen(entity,bars,cutoff,heat=None,*,collect_events=False):
                 'invalidation_close':round(e['invalidation'],6),'risk_distance_atr':round(risk/v,3),
                 'risk_distance_pct':round(risk/close,5),'setup_date':e['setup_date'],
                 'reason':'自身MA5首次上穿MA10、MA10向上，位置与风险条件通过；下一交易日纸面观察，开盘仍须复核'}
-    near=(abs(c['ma5']-c['ma10'])<=.25*v and strategy.greater(c['ma5'],cs[-2]['ma5']) and close>=c['ma10']-.5*v)
-    prepare=(near or (state.get('armed_date') is not None and not state.get('episode_consumed'))) and result['entry_distance_atr']<=1.5
+    prepare=state.get('watch_date') is not None and not state.get('episode_consumed') and result['entry_distance_atr']<=1.5
     if prepare:
-        return {**result,'phase':'preparing','prealert':True,'setup_date':state.get('armed_date') or data[-1]['date'],
+        return {**result,'phase':'preparing','prealert':True,'setup_date':state['watch_date'],
                 'reason':'5/10日线出现早期转强变化，尚未形成合格交叉确认；仅供观察，准备窗口最多5个交易日'+('；确认仍需65根历史' if count<65 else '')}
     if result['entry_distance_atr']>1.5:
         return {**result,'phase':'extended','reason':'自身价格距MA10超过1.5ATR，暂不追认新确认点'}
