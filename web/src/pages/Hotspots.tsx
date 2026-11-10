@@ -1,3 +1,4 @@
+import { CACHED_SUMMARY_REFRESH_MS } from '../lib/refreshPolicy';
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@astryxdesign/core/Button';
 import { InfoTip } from '@astryxdesign/core/InfoTip';
@@ -275,7 +276,7 @@ export function HotspotsPage({
   mode?: string;
   refreshTick: number;
 }): React.JSX.Element {
-  const hotspots = useResource((signal) => fetchHotspots(signal), [refreshTick], { pollMs: 300_000 });
+  const hotspots = useResource((signal) => fetchHotspots(signal), [refreshTick], { pollMs: CACHED_SUMMARY_REFRESH_MS });
   const [group, setGroup] = useState<string>('全部');
   const [visibleCount, setVisibleCount] = useState(20);
   const data = hotspots.data;

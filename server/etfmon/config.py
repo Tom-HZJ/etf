@@ -13,7 +13,7 @@ from pathlib import Path
 
 # ---------------------------------------------------------------- 版本与标识
 
-APP_VERSION = "2.12.0"
+APP_VERSION = "2.19.0"
 PRODUCT = "ETF 观察台"
 BUILT_AT = "2026-11-09"
 SCHEMA_VERSION = 1
@@ -264,7 +264,7 @@ TEAM_BASKET: tuple[tuple[str, str, str], ...] = (
     ("sz159915", "创业板ETF易方达", "创业板"),
     ("sz159952", "创业板ETF广发", "创业板"),
     ("sz159977", "创业板ETF天弘", "创业板"),
-    ("sz159949", "创业板ETF华安", "创业板"),
+    ("sz159949", "创业板50ETF华安", "创业板"),
     ("sh588080", "科创50ETF易方达", "科创50"),
     ("sh588050", "科创50ETF工银", "科创50"),
     ("sh588000", "科创50ETF华夏", "科创50"),
@@ -436,6 +436,33 @@ HOTSPOT_CODES: tuple[str, ...] = tuple(
     code for code, _direction, _group in HOTSPOT_UNIVERSE if code not in BROAD_CODES
 )
 TEAM_CODES: tuple[str, ...] = tuple(code for code, _name, _group in TEAM_BASKET)
+# User's trading scope: keep the full26 for context/flows, but only these
+# two directions remain eligible for live trading observations.
+CONTEXT_ONLY_TEAM_CODES: tuple[str, ...] = tuple(
+    code for code, _name, direction in TEAM_BASKET
+    if direction not in {"科创50", "创业板"}
+)
+# Explicit user sector exclusions. Keep quotes, source history and old journals.
+USER_EXCLUDED_TRADE_CODES: dict[str, str] = {
+    "sz159745": "建材",
+    "sh512200": "房地产",
+    "sh516950": "基建",
+    "sh563300": "中证2000",
+}
+# Only verified same-index products are alternatives. 创业板50 is a distinct
+# index, so159949 must not be merged with the 创业板指数 products.
+TRADE_INDEX_ALTERNATIVES: dict[str, tuple[str, ...]] = {
+    "科创50": ("sh588000", "sh588080", "sh588050"),
+    "创业板指数": ("sz159915", "sz159952", "sz159977"),
+}
+# User explicitly wants ONE reference per these similar alternatives, not a
+# displayed group or a claim that they track identical indices.
+TRADE_REFERENCE_ALTERNATIVES: dict[str, tuple[str, ...]] = {
+    "芯片科技参考": ("sh588000", "sh588080", "sh588050", "sh588200", "sh512480", "sz159995"),
+    "创业板指数参考": ("sz159915", "sz159952", "sz159977"),
+    "军工参考": ("sh512660", "sh512810"),
+    "航空参考": ("sz159227", "sz159378"),
+}
 INDEX_CODES: tuple[str, ...] = tuple(code for code, _name in INDEX_QUOTES)
 #: 报价采集范围（实体 + 指数）
 QUOTE_CODES: tuple[str, ...] = tuple(

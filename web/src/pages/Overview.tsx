@@ -1,4 +1,7 @@
 import type { OverviewResponse } from '../api/types';
+import {useEffect,useState} from 'react';
+import {legacyEstimateValue} from '../lib/legacyEstimate';
+import {LegacyEstimateDates} from '../components/LegacyEstimateDates';
 import { Badge } from '@astryxdesign/core/Badge';
 import { ChevronRight } from 'lucide-react';
 import type { Resource } from '../lib/hooks';
@@ -24,7 +27,10 @@ import { ErrorPanel, PanelSkeleton } from '../components/States';
 
 
 function NationalFeature({ data }: { data: OverviewResponse }): React.JSX.Element {
+  const [now,setNow]=useState(Date.now());useEffect(()=>{const timer=window.setInterval(()=>setNow(Date.now()),15_000);return()=>window.clearInterval(timer);},[]);
   const national = data.national;
+  const estimate=national.snapshot_estimate;
+  const estimateAmount=legacyEstimateValue(estimate,now);
   const dailyYi = national.daily_series.map((point) => (point.amount ?? 0) / 1e8);
   return (
     <Panel
@@ -35,7 +41,7 @@ function NationalFeature({ data }: { data: OverviewResponse }): React.JSX.Elemen
           国家队 <span className="mono text-[9px] font-normal tracking-[0.12em] text-[var(--etf-faint)]">26 BASKETS</span>
         </>
       }
-      sub="盘中估算 · 份额差 × 现价"
+      sub="份额快照差 × 现价"
       actions={
         <a className="nav-action" href={hrefFor('team')}>
           明细 <ChevronRight size={13} aria-hidden="true" />
@@ -56,22 +62,18 @@ function NationalFeature({ data }: { data: OverviewResponse }): React.JSX.Elemen
         <div>
           <div className="chip-row mb-1.5">
             <LabelBadge tone="gold">
-              {national.today_flow_partial ? '今日估算净申赎' : '最近交易日净申赎'}
+              盘中估算总额
             </LabelBadge>
             <LabelBadge tone="muted">
-              {national.today_flow_partial
-                ? '盘中'
-                : national.flow_date
-                  ? `${fmtMonthDay(national.flow_date)} 收盘`
-                  : '收盘'}
+              {estimateAmount===null?'估算待更新':`${fmtMonthDay(estimate?.date)} 现价 ${fmtTime(estimate?.quote_time)}`}
             </LabelBadge>
           </div>
-          <div className={`big-num ${deltaClass(national.today_flow)}`} aria-live="polite">
-            {fmtYiSigned(national.today_flow, 2)}
+          <div className={`big-num ${deltaClass(estimateAmount)}`} aria-live="polite">
+            {fmtYiSigned(estimateAmount, 2)}
             <span className="unit">亿元</span>
           </div>
           <div className="mt-1.5 text-[10.5px] leading-relaxed text-[var(--etf-faint)]">
-            份额差 {fmtSigned((national.today_share_delta ?? 0) / 1e8, 2)} 亿份 · 不能识别申赎主体
+            快照份额差 {fmtSigned(estimateAmount!==null&&estimate?estimate.share_delta/1e8:null, 2)} 亿份
           </div>
         </div>
         <div className="text-right">
@@ -82,13 +84,15 @@ function NationalFeature({ data }: { data: OverviewResponse }): React.JSX.Elemen
         </div>
       </div>
 
+      <LegacyEstimateDates flow={estimate}/>
+
       <p className="mt-3.5 border-l border-[var(--etf-line-strong)] pl-3 text-[11.5px] leading-[1.75] text-[var(--etf-ink-2)]">
         {national.trend_text}
       </p>
 
       <div className="mt-4 grid grid-cols-3 border-y border-[var(--etf-line)]">
         <Metric
-          label={`近 ${national.five_day_days} 日`}
+          label={`近 ${national.five_day_days} 个清算日`}
           value={<Delta value={(national.five_day_flow ?? 0) / 1e8} kind="number" digits={2} />}
           hint="亿元"
         />
@@ -361,8 +365,8 @@ export function OverviewPage({
       />
 
       <a className="research-entry" href={hrefFor('research')}>
-        <span><small>SWING RESEARCH · 日线研究</small><strong>趋势确认后，观察回踩与首次转强</strong><span className="research-entry-note">完整日线 · 次日观察 · 持有数天至数周</span></span>
-        <span className="research-entry-state">查看波段研究 ↗</span>
+        <span><small>ACTION DESK · 买卖提醒</small><strong>查看买入、卖出和止损提醒</strong><span className="research-entry-note">盘中触发时间 · 参考价格 · 模拟持仓</span></span>
+        <span className="research-entry-state">查看今日提醒 ↗</span>
       </a>
 
       {!data && overview.status === 'error' ? (

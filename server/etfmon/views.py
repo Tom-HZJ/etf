@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Iterable, Mapping, Sequence
 
-from . import analytics, config, minute, observability, sources, store, team_minute, research
+from . import analytics, config, minute, observability, sources, store, team_minute, research, settled_shares
 
 LOG = logging.getLogger("etfmon.views")
 
@@ -253,18 +253,10 @@ def _basket_flow_points(bars_by_code: Mapping[str, Sequence[Mapping[str, Any]]])
         if periods:
             periods_by_code[code] = list(periods)
     flows = analytics.combine_flow_periods(periods_by_code, bars_by_code)
-    daily = store.load_daily()
-    days = daily.get("days") or {}
-    latest_day = max(days) if days else None
-    latest_shares = {code: analytics.to_float(((days.get(latest_day) or {}).get(code) or {}).get("shares")) for code in config.TEAM_CODES} if latest_day else {}
-    prices: dict[str, float | None] = {}
-    for code in config.TEAM_CODES:
-        bars = bars_by_code.get(code) or []
-        if bars:
-            prices[code] = analytics.to_float(bars[-1].get("close"))
-        else:
-            # 缺日线时退回日数据里的收盘价，避免未结束报告期金额为空
-            prices[code] = analytics.to_float(((days.get(latest_day) or {}).get(code) or {}).get("price"))
+    bundle = settled_shares.read_bundle()
+    latest_day = bundle['latest_complete']
+    latest_shares = {c:r['shares'] for c,r in bundle['complete'].get(latest_day,{}).items()}
+    prices = {c:settled_shares.closes_for(c).get(latest_day) for c in config.TEAM_CODES}
     open_flow = analytics.open_period_basket(periods_by_code, latest_shares, prices, latest_day)
     return flows, open_flow
 
@@ -272,15 +264,9 @@ def _basket_flow_points(bars_by_code: Mapping[str, Sequence[Mapping[str, Any]]])
 def compute_chart_cache(moment: datetime | None = None) -> dict[str, Any]:
     """计算份额加权合成 K 线缓存（日终刷新写盘：national/chart.json）。"""
     moment = moment or _now()
-    daily = store.load_daily()
-    days = daily.get("days") or {}
-    latest_day = max(days) if days else None
-    weights: dict[str, float] = {}
-    if latest_day:
-        for code in config.TEAM_CODES:
-            shares = analytics.to_float(((days.get(latest_day) or {}).get(code) or {}).get("shares"))
-            if shares is not None and shares > 0:
-                weights[code] = shares
+    bundle = settled_shares.read_bundle(moment=moment)
+    latest_day = bundle['latest_complete']
+    weights = {c:r['shares'] for c,r in bundle['complete'].get(latest_day,{}).items()}
     bars_by_code: dict[str, list[dict[str, Any]]] = {}
     missing: list[str] = []
     for code in config.TEAM_CODES:
@@ -299,6 +285,7 @@ def compute_chart_cache(moment: datetime | None = None) -> dict[str, Any]:
         "unit": "亿元",
         "year": year,
         "weight_date": latest_day,
+        "shares_basis": settled_shares.VERSION,
         "weights": weights,
         "covered": [code for code in config.TEAM_CODES if code in bars_by_code],
         "missing": missing,
@@ -312,7 +299,10 @@ def compute_chart_cache(moment: datetime | None = None) -> dict[str, Any]:
 
 def _load_chart_cache() -> dict[str, Any]:
     payload = store.read_json(store.path_for("national", "chart.json"), {})
-    if not isinstance(payload, dict) or not payload.get("day_bars") and not payload.get("weights"):
+    bundle = settled_shares.read_bundle()
+    weights = {c:r['shares'] for c,r in bundle['complete'].get(bundle['latest_complete'],{}).items()}
+    if (not isinstance(payload, dict) or payload.get('shares_basis')!=settled_shares.VERSION
+            or payload.get('weight_date')!=bundle['latest_complete'] or payload.get('weights')!=weights):
         payload = compute_chart_cache()
     return payload
 
@@ -377,7 +367,7 @@ def _trading_calendar() -> list[str]:
 
 
 def _team_history(daily: Mapping[str, Any], quotes: Mapping[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    return analytics.build_history(daily.get("days") or {}, config.TEAM_CODES, _trading_calendar())
+    return settled_shares.build_view(quotes, _now(), _trading_calendar())["history"]
 
 
 def _intraday_points_for(daily: Mapping[str, Any], trade_date: str) -> list[dict[str, Any]]:
@@ -385,28 +375,63 @@ def _intraday_points_for(daily: Mapping[str, Any], trade_date: str) -> list[dict
     return analytics.intraday_series(daily.get("intraday") or {}, trade_date)
 
 
+def _legacy_date_evidence(quotes,base,base_day,trade_date,now,bundle=None):
+    """Value matching is reference evidence, never proof of an undated field's date."""
+    complete=(bundle or {}).get('complete') or {}
+    cutoff=research.completed_cutoff(now)
+    def matching(rows):
+        result=[]
+        for day,official in sorted(complete.items()):
+            if day>cutoff:continue
+            pairs=[(analytics.to_float((rows.get(c) or {}).get('shares')),analytics.to_float((official.get(c) or {}).get('shares'))) for c in config.TEAM_CODES]
+            if all(a is not None and b is not None and abs(a-b)<=.1 for a,b in pairs):result.append(day)
+        return result
+    quote_matches=matching(quotes);base_matches=matching(base)
+    return {'quote_shares':{'actual_date':None,'status':'not_supplied','matching_cleared_dates':quote_matches},
+            'baseline_shares':{'actual_date':None,'status':'snapshot_label_only','snapshot_label':base_day,'matching_cleared_dates':base_matches},
+            'reference_range':{'from':base_matches[0],'to':quote_matches[0],'verified':False,'basis':'value_match_only'} if len(base_matches)==len(quote_matches)==1 else None,
+            'valuation_date':trade_date,'snapshot_label_mismatch':bool(base_matches and base_day not in base_matches),
+            'is_current_day_subscription_flow':False}
+
+
+def _legacy_snapshot_estimate(quotes, daily, trade_date, now, stale=False,share_bundle=None):
+    """Explicitly requested legacy estimate. Dates here label observations/snapshots,
+    never a verified current-day change in exchange-cleared fund shares.
+    """
+    if stale or trade_date != now.date().isoformat():return None
+    days=daily.get('days') or {};base_day=max((d for d in days if d<trade_date),default=None)
+    if not base_day:return None
+    base=days[base_day];times=[]
+    for code in config.TEAM_CODES:
+        q=quotes.get(code) or {};prior=base.get(code) or {}
+        values=[analytics.to_float(q.get('shares')),analytics.to_float(q.get('price')),analytics.to_float(prior.get('shares'))]
+        stamp=store.parse_iso(q.get('quote_time'))
+        if any(v is None or v<=0 for v in values) or not stamp or stamp.date()!=now.date() or stamp>now+timedelta(seconds=3):return None
+        if store.is_trading_time(now) and (now-stamp).total_seconds()>config.STALE_AFTER_S:return None
+        times.append(stamp.isoformat(timespec='seconds'))
+    value=analytics.live_flow(config.TEAM_CODES,quotes,base_day,base,trade_date)
+    return {**value,'basis':'legacy_snapshot_difference','members':len(config.TEAM_CODES),
+            'quote_time':min(times),'shares_date_verified':False,'is_confirmed_current_day_flow':False,
+            'previous_day_basis':'snapshot_label',
+            'date_evidence':_legacy_date_evidence(quotes,base,base_day,trade_date,now,share_bundle)} if value else None
+
+
 def build_team(app: App) -> dict[str, Any]:
     """GET /api/team。"""
     now = _now()
     quotes, fetched_at, stale = _cached_quotes(app)
     daily = store.load_daily()
-    days = daily.get("days") or {}
-    history = _team_history(daily, quotes)
+    settled = settled_shares.build_view(quotes, now, _trading_calendar())
+    history = settled['history']
     trade_date = resolve_trade_date(quotes, daily)
-    latest_day = max(days) if days else None
-    previous_day = sorted(days)[-2] if len(days) > 1 else None
-    latest = (days.get(latest_day) or {}) if latest_day else {}
-    previous = (days.get(previous_day) or {}) if previous_day else {}
+    latest_day = settled['latest_date']
     latest_close = history[-1] if history else None
-    cumulative = analytics.cumulative_stats(history)
-    total_shares, total_value = analytics.basket_totals(latest, config.TEAM_CODES)
-    rows = analytics.basket_rows(config.TEAM_CODES, quotes, latest, previous)
+    cumulative = analytics.cumulative_stats(history[-3:])
+    total_shares, total_value = settled['total_shares'], settled['total_value']
+    rows = settled['rows']
     up = sum(1 for row in rows if analytics.to_float(row.get("change_pct")) is not None and (row["change_pct"] or 0) > 0)
     down = sum(1 for row in rows if analytics.to_float(row.get("change_pct")) is not None and (row["change_pct"] or 0) < 0)
-    is_today = trade_date == store.trade_date_of(now)
-    live = None
-    if is_today and store.is_trading_time(now) and (latest_day is None or latest_day < trade_date):
-        live = analytics.live_flow(config.TEAM_CODES, quotes, latest_day, latest, trade_date)
+    live = _legacy_snapshot_estimate(quotes,daily,trade_date,now,stale,settled['bundle'])
     chart_cache = _load_chart_cache()
     chart = _live_chart(chart_cache, quotes, trade_date)
     warnings: list[str] = []
@@ -416,9 +441,12 @@ def build_team(app: App) -> dict[str, Any]:
         warnings.append("报价已过期")
     if not history:
         warnings.append("还没有相邻两个交易日的份额，无法计算净申赎")
-    data_warnings = store.load_state().get("data_warnings")
-    if isinstance(data_warnings, dict) and latest_day and str(latest_day) in data_warnings:
-        warnings.append(str(data_warnings[str(latest_day)]))
+    if settled['quality']['verified'] < len(config.TEAM_CODES):
+        warnings.append('部分份额缺少交易所日期证明，变化与净申赎保留为空')
+    if latest_day != settled['quality']['expected']:
+        warnings.append('交易所份额尚未覆盖最近完整交易日；报价更新不代表份额已更新')
+    legacy_warning=(store.load_state().get('data_warnings') or {}).get(trade_date)
+    if legacy_warning:warnings.append(str(legacy_warning))
     if cumulative.get("excluded_days"):
         warnings.append(
             f"{cumulative['excluded_days']} 条记录跨多个交易日，未计入日净申赎累计（展示层标注 gap_days）"
@@ -447,29 +475,20 @@ def build_team(app: App) -> dict[str, Any]:
             "total_value": total_value,
             "value_date": latest_day,
         },
-        "live_flow": (
-            {
-                "date": live["date"],
-                "previous_day": live["previous_day"],
-                "amount": live["amount"],
-                "share_delta": live["share_delta"],
-                "partial": True,
-                "time": live["time"] or None,
-            }
-            if live
-            else None
-        ),
+        "live_flow": live,
         "latest_close": latest_close,
         "history": history,
         "cumulative": cumulative,
-        "market_pnl": analytics.market_pnl(quotes, config.TEAM_CODES),
+        "market_pnl": analytics.market_pnl(settled["quotes"], config.TEAM_CODES) if all(settled_shares.positive(settled["quotes"][c].get(k)) for c in config.TEAM_CODES for k in ("shares","price","pre_close")) else None,
         "up": up,
         "down": down,
         "trend": chart["trend"],
         "chart": {"unit": chart["unit"], "weight_date": chart["weight_date"], "covered": len(chart["covered"]), "missing": chart["missing"], "spans": chart["spans"]},
         "rows": rows,
         "flow_periods": chart_cache.get("flows") or [],
-        "intraday": _intraday_points_for(daily, trade_date),
+        "intraday": _intraday_points_for(daily,trade_date),
+        "shares_quality": settled["quality"],
+        "flow_status": "legacy_snapshot_estimate_with_settled_history",
         "quote_time": max(quote_times) if quote_times else None,
         "fetched_at": fetched_at,
         "data_quality": {
@@ -480,7 +499,8 @@ def build_team(app: App) -> dict[str, Any]:
         },
         "notes": {
             "method": (
-                "净申赎 = 相邻交易日总份额差 × 当日价格（元）；份额来自腾讯行情总份额字段。"
+                "顶部盘中总额按（行情份额−上一份历史快照份额）×现价估算；份额日期未作实时确认，不等于当日实际净申购。"
+                "净申赎估算 = 相邻清算日总份额差 × 对应日不复权收盘价（腾讯）；份额使用上交所/深交所带日期的清算后公开记录。报价时间与份额日期分别展示；未公布的当日份额不推算盘中申赎。"
                 "跨日缺口记录保留 gap_days 展示，但不计入日净申赎累计。"
                 "合成 K 线 = 各日价格 × 最新一日份额，单位亿元。"
                 "报告期净申赎 = 净份额（亿份）× 该报告期最后一个交易日收盘价（逐只乘后加总），单位亿元；"
@@ -1205,7 +1225,11 @@ def build_brief(
     window_label = "5 日" if five_days >= 5 else f"近 {five_days} 日"
 
     bullets: list[str] = []
-    if flow_yi is not None:
+    snapshot=national.get('snapshot_estimate') or {}
+    snapshot_yi=analytics.to_yi(snapshot.get('amount')) if snapshot.get('basis')=='legacy_snapshot_difference' else None
+    if snapshot_yi is not None:
+        bullets.append(_clip(f"篮子快照差额重估 {snapshot_yi:+.2f} 亿元，份额日期未核实",40))
+    elif flow_yi is not None:
         direction = "净申购" if flow_yi >= 0 else "净赎回"
         text = f"篮子{today_text}估算{direction} {abs(flow_yi):.1f} 亿元"
         if partial:
@@ -1275,24 +1299,18 @@ def build_overview(app: App) -> dict[str, Any]:
     quotes, _fetched_at, stale = _cached_quotes(app)
     daily = store.load_daily()
     hotspot_payload = build_hotspots(app)
-    history = _team_history(daily, quotes)
+    settled = settled_shares.build_view(quotes, now, _trading_calendar())
+    history = settled['history']
     trade_date = resolve_trade_date(quotes, daily)
     session = resolve_session(trade_date, now)
+    is_today = trade_date == store.trade_date_of(now)
     latest_day = history[-1]["date"] if history else None
     latest_close = history[-1] if history else None
-    cumulative = analytics.cumulative_stats(history)
+    cumulative = analytics.cumulative_stats(history[-3:])
     today_flow: float | None = None
     today_partial = False
     today_share_delta: float | None = None
     flow_date: str | None = None
-    is_today = trade_date == store.trade_date_of(now)
-    if store.is_trading_time(now) and is_today and (latest_day is None or latest_day < trade_date):
-        live = analytics.live_flow(config.TEAM_CODES, quotes, latest_day, (daily.get("days") or {}).get(latest_day) or {}, trade_date)
-        if live:
-            today_flow = live["amount"]
-            today_share_delta = live["share_delta"]
-            today_partial = True
-            flow_date = live["date"]
     if today_flow is None and latest_close is not None:
         # 收盘后/周末回退到最近一个已入库交易日的净申赎，只要有历史就不该为 null
         today_flow = latest_close.get("amount")
@@ -1308,7 +1326,8 @@ def build_overview(app: App) -> dict[str, Any]:
     month_flow = (
         analytics.calendar_month_flow(history, trade_date[:7]) if adjacent_days >= 5 else None
     )
-    total_shares, total_value = analytics.basket_totals((daily.get("days") or {}).get(latest_day) or {}, config.TEAM_CODES)
+    total_shares, total_value = settled["total_shares"], settled["total_value"]
+    snapshot_estimate = _legacy_snapshot_estimate(quotes,daily,trade_date,now,stale,settled['bundle'])
     chart_cache = _load_chart_cache()
     chart = _live_chart(chart_cache, quotes, trade_date)
     indices = [quotes.get(code) or _empty_quote(code) for code in config.INDEX_CODES]
@@ -1342,6 +1361,7 @@ def build_overview(app: App) -> dict[str, Any]:
         "median_ret_20d": None,
     }
     national = {
+        "snapshot_estimate": snapshot_estimate,
         "today_flow": today_flow,
         "today_flow_partial": today_partial,
         "flow_date": flow_date,

@@ -1821,6 +1821,7 @@ export function mockTeamMinute(interval: MinuteInterval, limit: number): TeamMin
       value: Math.round(scaled * 100) / 100,
       change_pct: first ? scaled / first - 1 : null,
       volume: volumes[index],
+      members: team.basket.count,
     };
   });
   return {
@@ -1831,6 +1832,7 @@ export function mockTeamMinute(interval: MinuteInterval, limit: number): TeamMin
     source: 'mock',
     warning: null,
     method: {
+      version: 'fixed-complete-basket-v2',
       unit: '亿元',
       weighting: 'latest shares × minute close',
       codes: team.basket.count,

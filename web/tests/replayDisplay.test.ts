@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {describeReplayMarkers,normalizeReplayPreferences,readReplayPreferences,saveReplayPreferences,REPLAY_PREFERENCES_KEY} from '../src/lib/replayDisplay.ts';
 import type {ReplayResult} from '../src/api/replay.ts';
 
-const defaults={model:'current',path:'combined',markers:'executions',cost:20};
+const defaults={model:'current',path:'combined',markers:'executions',cost:20,protect7:false};
 const opts={markers:'executions',daily:true,visibleDates:new Set(['2026-04-17','2026-04-28']),status:'success'};
 function replay(extra:Partial<ReplayResult>={}):ReplayResult{
   return {model:'current',year:2026,as_of:'2026-11-09',state:'research_only',signals:[],executions:[],cancelled:[],...extra} as ReplayResult;
@@ -15,26 +15,26 @@ test('a refresh restores the chosen legacy model, path, markers and zero cost',(
   const values=new Map<string,string>();
   const storage={getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>{values.set(key,value);}};
   assert.deepEqual(readReplayPreferences(storage),defaults);
-  const chosen={model:'legacy',path:'pullback',markers:'signals',cost:0} as const;
+  const chosen={model:'legacy',path:'pullback',markers:'signals',cost:0,protect7:false} as const;
   saveReplayPreferences(storage,chosen);
   assert.ok(values.has(REPLAY_PREFERENCES_KEY));
   assert.deepEqual(readReplayPreferences(storage),chosen);
 });
 test('invalid and obsolete choices cannot introduce a hidden current-model path',()=>{
   assert.deepEqual(normalizeReplayPreferences({model:'current',path:'pullback',markers:'bad',cost:'10'}),defaults);
-  assert.deepEqual(normalizeReplayPreferences({model:'legacy',path:'breakout',markers:'none',cost:40}),{model:'legacy',path:'breakout',markers:'none',cost:40});
+  assert.deepEqual(normalizeReplayPreferences({model:'legacy',path:'breakout',markers:'none',cost:40,protect7:false}),{model:'legacy',path:'breakout',markers:'none',cost:40,protect7:false});
   for(const value of [null,[],7,'bad'])assert.deepEqual(normalizeReplayPreferences(value),defaults);
 });
 test('malformed, blocked and quota-limited storage never prevents chart use',()=>{
   assert.deepEqual(readReplayPreferences({getItem:()=>'{bad',setItem:()=>{}}),defaults);
   const blocked={getItem:():string=>{throw new Error('blocked');},setItem:()=>{throw new Error('quota');}};
   assert.deepEqual(readReplayPreferences(blocked),defaults);
-  assert.doesNotThrow(()=>saveReplayPreferences(blocked,{model:'current',path:'combined',markers:'executions',cost:20}));
+  assert.doesNotThrow(()=>saveReplayPreferences(blocked,{model:'current',path:'combined',markers:'executions',cost:20,protect7:false}));
   assert.deepEqual(readReplayPreferences(),defaults);
 });
 test('an empty qualified model can explicitly inspect wider opportunities',()=>{
   const result=describeReplayMarkers(replay(),opts);
-  assert.equal(result.kind,'no-signals');assert.equal(result.action,'expanded');assert.match(result.text,/2026-11-09/);
+  assert.equal(result.kind,'no-signals');assert.equal(result.action,undefined);assert.match(result.text,/2026-11-09/);
   assert.equal(describeReplayMarkers(replay({model:'legacy'}),opts).action,undefined);
 });
 test('cancelled or pending confirmations are not reported as no signals',()=>{
@@ -69,7 +69,17 @@ test('visible and year counts separate confirmations from hypothetical execution
 });
 
 test('expanded choices persist and cannot retain an invisible legacy path',()=>{
-  assert.deepEqual(normalizeReplayPreferences({model:'expanded',path:'pullback',markers:'signals',cost:10}),{model:'expanded',path:'combined',markers:'signals',cost:10});
+  assert.deepEqual(normalizeReplayPreferences({model:'expanded',path:'pullback',markers:'signals',cost:10,protect7:false}),{model:'expanded',path:'combined',markers:'signals',cost:10,protect7:false});
   const display=describeReplayMarkers(replay({model:'expanded',signals:[buy],executions:[buy]}),opts);
-  assert.match(display.text,/扩展机会 v5/);
+  assert.match(display.text,/历史买卖点/);
+});
+
+test('seven-percent protection survives refresh and its markers remain labelled estimates',()=>{
+ const values=new Map<string,string>();const storage={getItem:(k:string)=>values.get(k)??null,setItem:(k:string,v:string)=>{values.set(k,v);}};
+ saveReplayPreferences(storage,{model:'expanded',path:'combined',markers:'executions',cost:20,protect7:true});
+ assert.equal(readReplayPreferences(storage).protect7,true);
+ const d=replay({model:'expanded',protection:'trailing7',signals:[buy,sell],executions:[buy,sell]});
+ assert.match(describeReplayMarkers(d,opts).text,/触价假设/);
+ assert.match(describeReplayMarkers(d,{...opts,markers:'signals'}).text,/规则事件/);
+ assert.equal(normalizeReplayPreferences({protect7:'true'}).protect7,false);
 });

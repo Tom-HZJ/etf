@@ -24,7 +24,7 @@ def simulate(bars,contexts,events,year,cost_bps=20):
     return strategy.simulate(bars,contexts,events,year,cost_bps)
 
 
-def _build(code,path,cutoff,cost_bps,moment,model='current'):
+def _build(code,path,cutoff,cost_bps,moment,model='current',protection='none'):
     expanded=model=='expanded';engine=opportunities if expanded else strategy
     completed=research.completed_cutoff(moment);requested=cutoff or completed;year=moment.astimezone(config.SHANGHAI_TZ).year
     raw=store.load_bars(code)
@@ -36,9 +36,17 @@ def _build(code,path,cutoff,cost_bps,moment,model='current'):
             'available_dates':[r['date'] for r in all_bars if r['date'].startswith(str(year))],
             'source':{k:store.load_bars_payload(code).get(k) for k in ['source','updated_at','adjustment']}}
     result['entry_limits']={k:engine.PARAMETERS[k] for k in ('extension_atr','maximum_risk_atr','setup_lookback')}
+    result['protection']=protection
     if expanded:
         result['model_warning']=opportunities.WARNING
         result['notes']=[NOTES[0],'MA5首次上穿MA10后含当天共5个交易日内确认，MA10向上且收盘在MA10上；距MA10不超过2ATR，初始风险不超过3ATR',*NOTES[2:6],opportunities.WARNING,NOTES[-1]]
+    if protection=='trailing7':
+        result['rule_version']+='/prior-high-7pct-v1'
+        result['model_label']='扩展机会 v5 + 单笔7%保护（日线近似）'
+        result['notes']=result['notes']+['7%为单次持仓回撤触发阈值，不是每ETF累计模型回撤或账户亏损的保证上限',
+          '保护线使用前一完整交易日已知的持仓最高价×93%；T+1可卖后，跳空低于保护线按实际开盘参考，否则以日线低点触线作假设参考',
+          '当日新高与低点顺序未知，不用当天新高提前收紧当天保护线；相关不确定日期单独列出。S触为触价假设，不是已证实的成交或收盘确认',
+          '前复权OHLC不能证明盘中成交、逐笔滑点或排队；没有自动下单，历史保护线与实时触价须用分钟/逐笔数据另行核实']
     if not config.is_etf_code(code):return {**result,'state':'unsupported','message':'当前进出规则仅研究境内股票ETF，不直接套用个股和指数'}
     if bad:return {**result,'state':'invalid_data','message':'日线异常，已暂停进出点计算，后台会检查补数'}
     if not data:return {**result,'message':'尚无该ETF的完整日线'}
@@ -48,7 +56,7 @@ def _build(code,path,cutoff,cost_bps,moment,model='current'):
     screened=research.screen(info,data,common,collect_events=True,model=model)
     if screened['phase']=='separate_rules':return {**result,'as_of':common,'state':'unsupported','message':screened['reason']}
     events=[e for e in screened.get('events',[]) if path=='combined' or e['path']==path]
-    simulation=engine.simulate(data,research._contexts(data),events,year,cost_bps)
+    simulation=engine.simulate(data,research._contexts(data),events,year,cost_bps,**({'trailing_drawdown':.07} if protection=='trailing7' else {}))
     event_dates={e['date'] for e in events if e['date'].startswith(str(year))}
     buy_dates={s['date'] for s in simulation['signals'] if s['side']=='buy'}
     diagnostics={'qualified_buy_dates':len(event_dates),'buy_confirmations':len(buy_dates),
@@ -63,12 +71,13 @@ def _build(code,path,cutoff,cost_bps,moment,model='current'):
             'current_reason':screened['reason'],'current_prealert':screened['prealert'],
             'message':'历史回算；完整信号与次日开盘参考分开，不预填未来价格'}
 
-def build_payload(code,path='combined',cutoff=None,cost_bps=20,moment=None,*,model='current'):
+def build_payload(code,path='combined',cutoff=None,cost_bps=20,moment=None,*,model='current',protection='none'):
     if model not in ('current','expanded','legacy'):raise ValueError('未知模型')
+    if protection not in ('none','trailing7') or (protection!='none' and model!='expanded'):raise ValueError('7%回撤保护仅用于扩展模型')
     if model=='legacy':
         from . import legacy_replay
         result=legacy_replay.build_payload(code,path,cutoff,cost_bps,moment)
-        return {**result,'model':'legacy','model_label':'旧规则 v3（原样对照）','model_status':'legacy'}
+        return {**result,'model':'legacy','model_label':'旧规则 v3（原样对照）','model_status':'legacy','protection':'none'}
     moment=moment or store.now();limit=research.completed_cutoff(moment)
     if path not in ('combined','breakout','pullback'):raise ValueError('未知研究路径')
     if cost_bps not in (0,10,20,40):raise ValueError('往返成本应为0/10/20/40基点')
@@ -81,11 +90,11 @@ def build_payload(code,path='combined',cutoff=None,cost_bps=20,moment=None,*,mod
             p=store.bars_path(symbol)
             try:s=p.stat();stamps.append((s.st_mtime_ns,s.st_size))
             except OSError:stamps.append(None)
-        return (str(config.data_dir()),code,path,cutoff,cost_bps,limit,VERSION,model,tuple(stamps))
+        return (str(config.data_dir()),code,path,cutoff,cost_bps,limit,VERSION,model,protection,tuple(stamps))
     key=fingerprint()
     with _LOCK:
         if key in _CACHE:return copy.deepcopy(_CACHE[key])
-        result=_build(code,path,cutoff,cost_bps,moment,model)
+        result=_build(code,path,cutoff,cost_bps,moment,model,protection)
         if fingerprint()!=key:return {**result,'state':'updating','signals':[],'executions':[],'trades':[],
                                      'position':None,'pending':None,'equity_curve':[],'summary':{},'diagnostics':{},
                                      'message':'来源正在更新，请稍后刷新'}

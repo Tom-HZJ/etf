@@ -11,6 +11,8 @@ import {
   createSeriesMarkers,
 } from 'lightweight-charts';
 import type { CandlestickData, HistogramData, LineData, SeriesMarker, Time, UTCTimestamp, WhitespaceData } from 'lightweight-charts';
+import { AdaptiveTradeLabels } from './AdaptiveTradeLabels';
+import type { ReplayPoint } from '../api/replay';
 import type { Bar, MinuteBar } from '../api/types';
 import type { ThemeMode } from '../lib/hooks';
 import { fmtNum, fmtPct, fmtPrice, fmtTurnover } from '../lib/format';
@@ -20,7 +22,7 @@ export interface FlowMarker {
   net: number;
   label?: string;
 }
-export interface StrategyMarker {date:string;side:'buy'|'sell';price:number;label:string;reason:string}
+export interface StrategyMarker extends ReplayPoint {label:string}
 export interface MovingAverageLine {label:string;tone:'gold'|'cyan'|'violet';points:{date:string;value:number}[]}
 const EMPTY_FLOW:FlowMarker[]=[];
 const EMPTY_STRATEGY:StrategyMarker[]=[];
@@ -91,6 +93,7 @@ export function KlineChart({
   ariaLabel,
   baseline = null,
   interactive = true,
+  onSelectStrategyMarker,
 }: {
   bars: Bar[];
   ma20: { date: string; value: number }[];
@@ -98,6 +101,7 @@ export function KlineChart({
   movingAverages?:MovingAverageLine[];
   markers?: FlowMarker[];
   strategyMarkers?:StrategyMarker[];
+  onSelectStrategyMarker?:(marker:StrategyMarker)=>void;
   windowDates?:string[];
   height?: number;
   mode: ThemeMode;
@@ -107,6 +111,8 @@ export function KlineChart({
 }): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState<HoverBar | null>(null);
+  const selectRef=useRef(onSelectStrategyMarker);
+  useEffect(()=>{selectRef.current=onSelectStrategyMarker;},[onSelectStrategyMarker]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -133,7 +139,7 @@ export function KlineChart({
       },
       rightPriceScale: {
         borderColor: palette.grid,
-        scaleMargins: { top: 0.08, bottom: 0.26 },
+        scaleMargins: strategyMarkers.length?{top:.12,bottom:.30}:{top:.08,bottom:.26},
         entireTextOnly: true,
       },
       timeScale: {
@@ -231,9 +237,16 @@ export function KlineChart({
         text: marker.label ?? fmtNum(marker.net, 0),
       }));
     const actualDates=new Set(bars.map(row=>row.date));
-    markerData.push(...strategyMarkers.filter(marker=>actualDates.has(marker.date)).map(marker=>({time:marker.date as Time,position:marker.side==='buy'?'belowBar' as const:'aboveBar' as const,color:marker.side==='buy'?palette.up:palette.down,shape:marker.side==='buy'?'arrowUp' as const:'arrowDown' as const,text:marker.label+' '+fmtPrice(marker.price)})));
     markerData.sort((a,b)=>String(a.time).localeCompare(String(b.time)));
     const markerPlugin = createSeriesMarkers(candles, markerData);
+    const tradeLabels=new AdaptiveTradeLabels({buy:palette.up,sell:palette.down,background:palette.surface},.79);
+    const markerById=new Map(strategyMarkers.filter(marker=>actualDates.has(marker.date)).map(marker=>[`${marker.date}:${marker.side}:${marker.label}`,marker]));
+    tradeLabels.setData([...markerById].map(([id,marker])=>({id,time:marker.date as Time,price:marker.price,side:marker.side,text:marker.label+' '+fmtPrice(marker.price)})),[
+      ...bars.map(bar=>({time:bar.date as Time,high:bar.high,low:bar.low})),
+      ...averages.flatMap(line=>line.points.map(point=>({time:point.date as Time,high:point.value,low:point.value}))),
+    ]);
+    candles.attachPrimitive(tradeLabels);
+    chart.subscribeClick(param=>{const marker=markerById.get(String(param.hoveredObjectId));if(marker)selectRef.current?.(marker);});
 
     const barMap = new Map(bars.map((bar, index) => [bar.date, { bar, previous: index > 0 ? bars[index - 1] : null }]));
     chart.subscribeCrosshairMove((param) => {
@@ -265,6 +278,7 @@ export function KlineChart({
     return () => {
       cancelAnimationFrame(fitFrame);
       markerPlugin.detach();
+      candles.detachPrimitive(tradeLabels);
       chart.remove();
     };
   }, [bars, ma20, ma60,movingAverages, markers, strategyMarkers,windowDates,mode, baseline, interactive]);

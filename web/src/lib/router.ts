@@ -21,7 +21,7 @@ export const ROUTES: RouteMeta[] = [
     index: '01',
     summary: '一屏回答：市场怎样、篮子份额怎样变化、热点在哪。',
   },
-  { key:'research', path:'/research', label:'波段研究', en:'SWING RESEARCH', index:'02', summary:'完整日线、回踩确认与次日观察。' },
+  { key:'research', path:'/research', label:'买卖提醒', en:'ACTION DESK', index:'02', summary:'买入观察、模拟卖出和止损提醒。' },
   {
     key: 'team',
     path: '/team',

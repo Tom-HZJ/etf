@@ -627,6 +627,7 @@ def daily_refresh(cache: QuoteCache, moment: datetime | None = None) -> dict[str
         from . import research
         summary["research_record"] = research.record_close(store.now())
         summary["expanded_research_record"] = research.record_close(store.now(),model='expanded')
+        summary["protected_research_record"] = research.record_close(store.now(),model='expanded',protection='trailing7')
     except (ValueError, OSError) as exc:
         warnings.append(f"研究观察记录失败：{exc}")
 
@@ -765,6 +766,12 @@ class Collector:
             except (sources.SourceError, OSError, ValueError) as exc:
                 LOG.warning("报价刷新失败：%s", exc)
                 store.append_task("refresh_quotes", ok=False, detail=str(exc))
+            try:
+                from . import actions
+                with _DATA_LOCK:
+                    actions.process(self.cache.snapshot()[0],paper_trading=True)
+            except Exception as exc:
+                LOG.exception("盘中观察提醒更新失败，下轮重试：%s", exc)
             try:
                 observability.check_data_staleness()
             except (OSError, ValueError) as exc:

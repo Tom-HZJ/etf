@@ -1,3 +1,12 @@
+import { CACHED_QUOTE_REFRESH_MS, MINUTE_CHART_REFRESH_MS } from '../lib/refreshPolicy';
+import { TradePointExplanation } from '../components/TradePointExplanation';
+import { replayPointKey } from '../lib/tradeReasons';
+import {fetchActions} from '../api/actions';
+import {ACTIVE_PROFILE} from '../lib/activePolicy';
+import {buyMinuteMarkers} from '../lib/buyPoints';
+import {sellMinuteMarkers} from '../lib/sellPoints';
+import type {MinutePricePoint} from '../lib/sessionAxis';
+import {ActionStrip} from '../components/ActionStrip';
 import { chartRange } from '../lib/chartRange';
 import { HoldingsPanel } from '../components/HoldingsPanel';
 import { useStrategyReplay,ReplayControls,ReplayDetails,ReplayMarkerStatus } from '../components/ReplayPanel';
@@ -257,6 +266,9 @@ function DetailChart({
   mode,
   onRetry,
   replay,
+  buyPoints,
+  exitPoints,
+  tradeAllowed,
 }: {
   payload: ChartPayload;
   period: ChartPeriod;
@@ -265,12 +277,16 @@ function DetailChart({
   mode: ThemeMode;
   onRetry: () => void;
   replay:ReplayView;
+  buyPoints:readonly MinutePricePoint[];
+  exitPoints:readonly MinutePricePoint[];
+  tradeAllowed:boolean;
 }): React.JSX.Element {
   const isMobile = useMediaQuery('(max-width: 767px)');
   const [range, setRange] = useState<RangeKey>('ytd');
+  const [selectedPoint,setSelectedPoint]=useState<string|null>(null);
   const minute = payload.kind === 'minute';
   const rawBars = payload.kind === 'bars' ? payload.data : null;
-  const replayCutoff=replay.cutoff||replay.data?.as_of;
+  const replayCutoff=tradeAllowed?(replay.cutoff||replay.data?.as_of):null;
   const bars = useMemo(()=>rawBars&&rawBars.span==='day'&&replayCutoff?{...rawBars,bars:rawBars.bars.filter(row=>row.date<=replayCutoff)}:rawBars,[rawBars,replayCutoff]);
   const minutes = payload.kind === 'minute' ? payload.data : null;
   const warning = minute ? minutes?.warning : bars?.warning;
@@ -304,7 +320,7 @@ function DetailChart({
     ? `${minutes?.name ?? '—'} · ${minutes?.interval ?? '—'} 分钟 · ${sessionCount} 个当日点 · 涨跌幅（${minuteBasis !== null ? '相对昨收' : '相对首分钟'}）`
     : `${bars?.name ?? '—'} · 前复权 · ${bars?.bars.length ?? 0} 根 · ${bars?.span==='day'?'MA5/10/30':'MA20/60'}`;
   const rangeLabel = RANGES.find((item) => item.value === range)?.label ?? '全部';
-  const plottedMarkers=useMemo(()=>bars?.span==='day'&&replay.markers!=='none'?(replay.markers==='signals'?replay.data?.signals:replay.data?.executions)?.map(point=>({...point,label:`${point.side==='buy'?'B':'S'}${replay.markers==='signals'?'确认':'开'}`})):undefined,[bars?.span,replay.data,replay.markers]);
+  const plottedMarkers=useMemo(()=>bars?.span==='day'&&replay.markers!=='none'?(replay.markers==='signals'?replay.data?.signals:replay.data?.executions)?.map(point=>({...point,label:point.execution_basis==='stop_assumption'?'S触':point.timing==='intraday_estimate'?'S开':`${point.side==='buy'?'B':'S'}${replay.markers==='signals'?'确认':'开'}`})):undefined,[bars?.span,replay.data,replay.markers]);
   const visibleDates=useMemo(()=>new Set(ranged?.bars.map(row=>row.date)??[]),[ranged]);
 
   return (
@@ -330,9 +346,9 @@ function DetailChart({
         warning ? (
           <span className="text-[var(--etf-amber)]">上游提示：{warning}</span>
         ) : minute ? (
-          <span>分钟走势为相对昨收的涨跌幅折线；固定全天时间轴、午休断开、滚轮不缩放、无悬停浮层。</span>
+          <span>全天分时 · 买点显示触发时间和参考价</span>
         ) : (
-          <span>日/周/月蜡烛图支持缩放平移；今年以来以去年末收盘为基准，其他区间以首根收盘为基准，成交量单位手。</span>
+          <span>拖动平移，滚轮缩放 · 成交量：手</span>
         )
       }
     >
@@ -395,7 +411,7 @@ function DetailChart({
             : `${rangeLabel} · 可缩放 · 悬停看相对基准`}
         </span>
       </div>
-      <ReplayMarkerStatus view={replay} daily={!minute&&period==='day'} visibleDates={visibleDates} onDaily={()=>onPeriod('day')} onYear={()=>setRange('ytd')}/>
+      {tradeAllowed&&period==='day'?<ReplayMarkerStatus view={replay} daily visibleDates={visibleDates} onDaily={()=>onPeriod('day')} onYear={()=>setRange('ytd')}/>:null}
       {hasData ? (
         <div className="px-1 pb-1 pt-1">
           {minute && minutes ? (
@@ -403,6 +419,8 @@ function DetailChart({
               bars={minutes.bars}
               interval={minutes.interval}
               basis={minuteBasis}
+              buyPoints={buyPoints}
+              exitPoints={exitPoints}
               mode={mode}
               height={isMobile ? 300 : 400}
               ariaLabel={`${minutes.name} ${minutes.interval} 分钟涨跌幅走势，相对${minuteBasis !== null ? '昨收' : '首分钟'}`}
@@ -414,8 +432,9 @@ function DetailChart({
               ma60={rangedMa.ma60}
               movingAverages={displayedAverages}
               baseline={ranged.baseline}
-              strategyMarkers={plottedMarkers}
-              windowDates={bars.span==='day'&&range==='ytd'?replay.dates:undefined}
+              strategyMarkers={tradeAllowed?plottedMarkers:undefined}
+              onSelectStrategyMarker={point=>setSelectedPoint(replayPointKey(point))}
+              windowDates={tradeAllowed&&bars.span==='day'&&range==='ytd'?replay.dates:undefined}
               mode={mode}
               height={isMobile ? 310 : 410}
               ariaLabel={`${bars.name} ${rangeLabel}${bars.span === 'day' ? '日' : bars.span === 'week' ? '周' : '月'} K 线，区间涨跌 ${fmtPct(ranged.change)}`}
@@ -432,13 +451,14 @@ function DetailChart({
                 : '该标的暂无本地 K 线。'}
           </p>
           <p className="text-[10.5px] text-[var(--etf-faint)]">
-            上游暂时不可用时会返回空数组 + warning，不代表代码非法；稍后重试即可，不会重复打上游。
+            暂时没有行情，请稍后刷新。
           </p>
           <div className="flex justify-center">
             <Button label="稍后重试" size="sm" variant="secondary" onClick={onRetry} />
           </div>
         </div>
       )}
+      {tradeAllowed&&bars?.span==='day'&&replay.data&&replay.markers!=='none'?<TradePointExplanation points={(plottedMarkers??[]).filter(p=>visibleDates.has(p.date))} selected={selectedPoint} onSelect={setSelectedPoint} data={replay.data} bars={bars.bars} kind={replay.markers}/>:null}
     </Panel>
   );
 }
@@ -567,16 +587,23 @@ export function MarketPage({
   refreshTick,
   initialCode,
   embedded = false,
+  initialPeriod = 'day',
 }: {
   mode: ThemeMode;
   refreshTick: number;
   initialCode: string | null;
   embedded?: boolean;
+  initialPeriod?: ChartPeriod;
 }): React.JSX.Element {
   const watchlist = useResource((signal) => fetchWatchlist(signal), [refreshTick]);
   const [selected, setSelected] = useState(initialCode ?? 'sh510300');
   const replay=useStrategyReplay(selected,refreshTick);
-  const [period, setPeriod] = useState<ChartPeriod>('day');
+  const [period, setPeriod] = useState<ChartPeriod>(initialPeriod);
+  const actionsResource=useResource(signal=>fetchActions(signal,ACTIVE_PROFILE.model,ACTIVE_PROFILE.protection),[refreshTick],{pollMs:CACHED_QUOTE_REFRESH_MS});
+  const actionData=actionsResource.data??null;
+  const tradeAllowed=Boolean(actionData?.trade_scope&&!actionData.trade_scope.excluded_codes.includes(selected)&&!actionData.trade_scope.user_excluded_codes?.includes(selected)&&!actionData.trade_scope.duplicate_codes?.includes(selected));
+  const buyPoints=useMemo(()=>buyMinuteMarkers(actionData,selected),[actionData,selected]);
+  const exitPoints=useMemo(()=>sellMinuteMarkers(actionData,selected),[actionData,selected]);
   const [busy, setBusy] = useState<string | null>(null);
   const notify = useNotify();
   const chartCache = useRef(new Map<string, { payload: ChartPayload; at: number }>());
@@ -614,7 +641,7 @@ export function MarketPage({
       return payload;
     },
     [selected, period, refreshTick],
-    { pollMs: minuteInterval(period) !== null ? 60_000 : undefined },
+    { pollMs: minuteInterval(period) !== null ? MINUTE_CHART_REFRESH_MS : undefined },
   );
 
   const barsData = chart.data?.kind === 'bars' ? chart.data.data : null;
@@ -637,7 +664,7 @@ export function MarketPage({
     return () => window.clearTimeout(timer);
   }, [chartWarning, chartEmpty, chart.reload, selected, period]);
 
-  const liveQuotes = useResource(signal => fetchQuotes([selected], signal), [selected, refreshTick], {pollMs:20_000});
+  const liveQuotes = useResource(signal => fetchQuotes([selected], signal), [selected, refreshTick], {pollMs:CACHED_QUOTE_REFRESH_MS});
   const item = watchlist.data?.items.find((entry) => entry.code === selected);
   const quote = liveQuotes.data?.find(q => q.code === selected) ?? (barsData?.quote?.code === selected ? barsData.quote : null) ?? item?.quote ?? null;
   const minuteBasis = quote?.quote_time?.slice(0,10) === minuteData?.as_of?.slice(0,10) ? quote?.pre_close ?? null : null;
@@ -712,9 +739,10 @@ export function MarketPage({
         </div>:null}
 
         <div className="space-y-4 market-content">
-          {replay.cutoff?<p className="fund-disclosure">下方报价卡为当前行情；历史回放仅影响日K和策略记录。</p>:null}
+          {tradeAllowed&&replay.cutoff?<p className="fund-disclosure">下方报价卡为当前行情；历史回放仅影响日K和策略记录。</p>:null}
           <QuoteHeader quote={quote} bars={barsData} />
-          <ReplayControls view={replay} onDaily={()=>setPeriod('day')}/>
+          <ActionStrip code={selected} data={actionData}/>
+          {tradeAllowed&&period==='day'?<ReplayControls view={replay} onDaily={()=>setPeriod('day')}/>:actionData?.trade_scope?.excluded_codes.includes(selected)?<p className="action-footnote">此ETF仅查看行情。</p>:actionData?.trade_scope?.user_excluded_codes?.includes(selected)?<p className="action-footnote">此ETF仅查看行情。</p>:actionData?.trade_scope?.duplicate_codes?.includes(selected)?<p className="action-footnote">此ETF仅查看行情。</p>:null}
 
           {chart.status === 'error' && !chart.data ? (
             <ErrorPanel error={chart.error} onRetry={chart.reload} title="K 线加载失败" />
@@ -727,12 +755,15 @@ export function MarketPage({
               mode={mode}
               onRetry={chart.reload}
               replay={replay}
+              buyPoints={buyPoints}
+              exitPoints={exitPoints}
+              tradeAllowed={tradeAllowed}
             />
           ) : (
             <PanelSkeleton rows={2} chart />
           )}
 
-          <ReplayDetails view={replay}/>
+          {tradeAllowed&&period==='day'?<ReplayDetails view={replay}/>:null}
 
           {(quote?.kind==='etf' || /^(sh5|sz1[56])/.test(selected)) ? <HoldingsPanel code={selected} refreshTick={refreshTick}/> : null}
 

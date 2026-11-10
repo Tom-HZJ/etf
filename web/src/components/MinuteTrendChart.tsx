@@ -15,10 +15,11 @@ import type {
   LineData,
   WhitespaceData,
 } from "lightweight-charts";
+import { AdaptiveTradeLabels } from "./AdaptiveTradeLabels";
 import type { MinuteBar } from "../api/types";
 import type { ThemeMode } from "../lib/hooks";
-import { buildSessionFrame, indexClock } from "../lib/sessionAxis";
-import type { FramePoint } from "../lib/sessionAxis";
+import { buildSessionFrame, completeLineRuns, indexClock, minutePricePoints } from "../lib/sessionAxis";
+import type { FramePoint, MinutePricePoint } from "../lib/sessionAxis";
 
 const COLORS = {
   dark: {
@@ -37,6 +38,7 @@ const COLORS = {
   },
 };
 type Frame = ReturnType<typeof buildSessionFrame>;
+const NO_BUY_POINTS: readonly MinutePricePoint[] = [];
 interface LiveChart {
   chart: IChartApi;
   morning: ISeriesApi<"Line">;
@@ -46,6 +48,9 @@ interface LiveChart {
   palette: typeof COLORS.dark;
   frame: Frame | null;
   extent: number;
+  runs: ISeriesApi<"Line">[];
+  buySeries: ISeriesApi<"Line">;
+  buyMarkers: AdaptiveTradeLabels;
   pin: () => void;
 }
 function linePoints(
@@ -65,6 +70,9 @@ export function MinuteTrendChart({
   height = 380,
   mode,
   ariaLabel,
+  breakOnMissing = false,
+  buyPoints = NO_BUY_POINTS,
+  exitPoints = NO_BUY_POINTS,
 }: {
   bars: MinuteBar[];
   interval: number;
@@ -72,6 +80,9 @@ export function MinuteTrendChart({
   height?: number;
   mode: ThemeMode;
   ariaLabel: string;
+  breakOnMissing?: boolean;
+  buyPoints?: readonly MinutePricePoint[];
+  exitPoints?: readonly MinutePricePoint[];
 }): React.JSX.Element {
   const container = useRef<HTMLDivElement>(null),
     axis = useRef<HTMLDivElement>(null);
@@ -144,6 +155,12 @@ export function MinuteTrendChart({
       visible: false,
       priceScaleId: "anchor",
     });
+    const buySeries = chart.addSeries(LineSeries, {
+      ...options, lineVisible: false, pointMarkersVisible: false,
+      pointMarkersRadius: 4, color: mode==='dark'?'#f2685b':'#c9372c',
+    });
+    const buyMarkers = new AdaptiveTradeLabels({buy:mode==='dark'?'#f2685b':'#c9372c',sell:mode==='dark'?'#35c49b':'#08795f',background:mode==='dark'?'#0f151d':'#ffffff'},.79);
+    buySeries.attachPrimitive(buyMarkers);
     const volume = chart.addSeries(HistogramSeries, {
       priceScaleId: "volume",
       priceFormat: { type: "volume" },
@@ -162,6 +179,9 @@ export function MinuteTrendChart({
       palette,
       frame: null,
       extent: 0.5,
+      runs: [],
+      buySeries,
+      buyMarkers,
       pin: () => {},
     };
     live.current = state;
@@ -190,6 +210,7 @@ export function MinuteTrendChart({
     resize.observe(container.current);
     return () => {
       resize.disconnect();
+      buySeries.detachPrimitive(buyMarkers);
       chart.remove();
       live.current = null;
     };
@@ -201,12 +222,19 @@ export function MinuteTrendChart({
     if (state.frame?.day !== frame.day) state.extent = 0.5;
     state.frame = frame;
     state.anchor.setData(linePoints(frame.anchor));
-    state.morning.setData(
-      linePoints(frame.line.filter((p) => p.time <= 120 * 60)),
-    );
-    state.afternoon.setData(
-      linePoints(frame.line.filter((p) => p.time >= 122 * 60)),
-    );
+    for (const series of state.runs) state.chart.removeSeries(series);
+    state.runs = [];
+    state.morning.setData(breakOnMissing ? [] : linePoints(frame.line.filter((p) => p.time <= 120 * 60)));
+    state.afternoon.setData(breakOnMissing ? [] : linePoints(frame.line.filter((p) => p.time >= 122 * 60)));
+    if (breakOnMissing) {
+      for (const run of completeLineRuns(frame.line)) {
+        const series = state.chart.addSeries(LineSeries, {
+          ...state.morning.options(), pointMarkersVisible: run.length === 1,
+        });
+        series.setData(linePoints(run));
+        state.runs.push(series);
+      }
+    }
     state.volume.setData(
       frame.volume.map((p) =>
         p.value !== undefined
@@ -220,12 +248,17 @@ export function MinuteTrendChart({
           : { time: p.time as UTCTimestamp },
       ),
     );
+    const points = [...minutePricePoints(buyPoints, frame.day, frame.basis),
+      ...minutePricePoints(exitPoints.filter(p=>p.kind==='sell'),frame.day,frame.basis),
+      ...minutePricePoints(exitPoints.filter(p=>p.kind==='risk'),frame.day,frame.basis)].sort((a,b)=>a.time-b.time);
+    state.buySeries.setData([...new Map(points.map(p=>[p.time,{time:p.time as UTCTimestamp,value:p.value}])).values()]);
+    state.buyMarkers.setData(points.map(p=>({id:p.id,time:p.time as UTCTimestamp,price:p.value,side:p.kind?'sell':'buy',text:`${p.kind==='risk'?'保护':p.kind==='sell'?'卖':'买'} ${p.clock} · ${p.price.toFixed(3)}`})),frame.line.flatMap(p=>p.value!==undefined?[{time:p.time as UTCTimestamp,high:p.value,low:p.value}]:[]));
     const actual = frame.line.flatMap((p) =>
       p.value !== undefined ? [Math.abs(p.value)] : [],
     );
     state.extent = Math.max(
       state.extent,
-      Math.ceil(Math.max(0.5, ...actual) * 1.15 * 2) / 2,
+      Math.ceil(Math.max(0.5, ...actual, ...points.map(p=>Math.abs(p.value))) * 1.15 * 2) / 2,
     );
     const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
     setCaption(
@@ -234,7 +267,7 @@ export function MinuteTrendChart({
     state.pin();
     const raf = requestAnimationFrame(state.pin);
     return () => cancelAnimationFrame(raf);
-  }, [bars, interval, basis, mode]);
+  }, [bars, interval, basis, mode, breakOnMissing, buyPoints, exitPoints]);
   return (
     <div
       className="chart chart--fixed-session"

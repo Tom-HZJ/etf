@@ -92,6 +92,32 @@ class ApiTest(unittest.TestCase):
                 "intraday": {},
             }
         )
+        # Team and overview use complete exchange-cleared shares and unadjusted closes.
+        settled_days = ("2026-11-05", "2026-11-06")
+        for day, share_count in zip(settled_days, (1000.0, 1100.0)):
+            for exchange, prefix in (("sse", "sh"), ("szse", "sz")):
+                store.write_json(
+                    store.path_for("share_history", exchange, f"{day}.json"),
+                    {
+                        "date": day,
+                        "source": f"{exchange}_settled_etf_shares",
+                        "unit": "份",
+                        "rows": {
+                            code: {"shares": share_count}
+                            for code in config.TEAM_CODES
+                            if code.startswith(prefix)
+                        },
+                    },
+                )
+        for code in config.TEAM_CODES:
+            store.write_json(
+                store.path_for("share_history", "prices", f"{code}.json"),
+                {
+                    "source": "tencent_unadjusted_daily",
+                    "adjustment": "none",
+                    "closes": dict.fromkeys(settled_days, 1.0),
+                },
+            )
         store.save_flows(
             "sh510300",
             {
@@ -736,6 +762,23 @@ class ApiTest(unittest.TestCase):
     def test_unknown_replay_model_is_rejected(self) -> None:
         status,_=self.json_get('/api/research/replay?code=sh512480&model=unknown')
         self.assertEqual(status,400)
+
+    def test_action_desk_is_read_only_and_validates_model(self) -> None:
+        from etfmon import actions
+        with mock.patch.object(actions,'process',side_effect=AssertionError('GET must not write')):
+            status,payload=self.json_get('/api/research/actions?model=expanded')
+            self.assertEqual(status,200);self.assertEqual(payload['position_basis'],'simulated_only')
+            self.assertEqual(payload['rows'],[])
+        status,_=self.json_get('/api/research/actions?model=current&protection=trailing7')
+        self.assertEqual(status,400)
+
+    def test_position_drawdown_protection_contract(self) -> None:
+        status,payload=self.json_get('/api/research/replay?code=sh512480&model=expanded&protection=trailing7')
+        self.assertEqual(status,200);self.assertEqual(payload['protection'],'trailing7')
+        self.assertTrue(payload['rule_version'].endswith('/prior-high-7pct-v1'))
+        status,payload=self.json_get('/api/research?model=expanded&protection=trailing7')
+        self.assertEqual(status,200);self.assertEqual(payload['protection'],'trailing7');self.assertTrue(payload['rule_version'].endswith('-drawdown7'))
+        status,_=self.json_get('/api/research/replay?code=sh512480&model=legacy&protection=trailing7');self.assertEqual(status,400)
 
 
 def analytics_states() -> set[str]:

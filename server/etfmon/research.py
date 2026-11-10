@@ -136,7 +136,7 @@ def assess_position(position,bars,cutoff):
     return legacy_research.assess_position(position,bars,cutoff)
 
 
-def _build_payload(moment=None,model='current'):
+def _build_payload(moment=None,model='current',protection='none'):
     moment = moment or store.now(); cutoff = completed_cutoff(moment)
     rows = [];sources=set();collected=[];target=expected_close_date(moment)
     for code in config.HOTSPOT_CODES:
@@ -145,6 +145,7 @@ def _build_payload(moment=None,model='current'):
         _,invalid=clean_bars(own_bars,cutoff)
         heat=None if invalid else analytics.analyze_hotspot_row({'code':code,'name':e.name,'direction':e.direction,'group':e.group},[b for b in own_bars if str(b.get('date',''))<=cutoff],{})['heat']
         row=screen({'code': code, 'name': e.name, 'direction': e.direction, 'group': e.group},own_bars,cutoff,heat,model=model)
+        if protection=='trailing7':row['exit_plan']=['单笔7%回撤保护：前日已知持仓最高价×93%，T+1可卖后触线作假设参考；跳空按实际开盘，不能保证亏损封顶7%',*row['exit_plan']]
         if row['phase']!='separate_rules' and row.get('data_date') and row['data_date']<target:
             row.update(eligible=False,prealert=False,phase='stale',reason='该ETF自身完整日线未更新，暂停本ETF的新观察判断')
         rows.append(row)
@@ -155,7 +156,7 @@ def _build_payload(moment=None,model='current'):
     rows.sort(key=lambda r: (not r['eligible'], not r['prealert'], r['phase'], -(r.get('heat') or 0)))
     usable=[r for r in rows if r['phase']!='separate_rules']
     stale=not any(r.get('data_date') and r['data_date']>=target for r in usable)
-    return {'generated_at': moment.isoformat(timespec='seconds'), 'model':model,'rule_version': opportunities.ENTRY_VERSION if model=='expanded' else RULE_VERSION,
+    return {'generated_at': moment.isoformat(timespec='seconds'), 'model':model,'protection':protection,'rule_version': (opportunities.ENTRY_VERSION if model=='expanded' else RULE_VERSION)+('-drawdown7' if protection=='trailing7' else ''),
             'model_label':opportunities.LABEL if model=='expanded' else '较严入场 v4（研究）',
             'model_warning':opportunities.WARNING if model=='expanded' else None,
             'mode': 'experimental_reconstruction','decision_scope':'self_only','external_reference_required':False,
@@ -174,25 +175,26 @@ _CACHE_LOCK=threading.RLock()
 _CACHE_KEY=None
 _CACHE_PAYLOAD=None
 
-def _fingerprint(moment,model='current'):
+def _fingerprint(moment,model='current',protection='none'):
     paths=[store.bars_path(c) for c in config.HOTSPOT_CODES]
     stamps=[]
     for path in paths:
         try:
             st=path.stat();stamps.append((str(path),st.st_mtime_ns,st.st_size))
         except OSError:stamps.append((str(path),None,None))
-    return (str(config.data_dir()),completed_cutoff(moment),RULE_VERSION,model,tuple(stamps))
+    return (str(config.data_dir()),completed_cutoff(moment),RULE_VERSION,model,protection,tuple(stamps))
 
-def build_payload(moment=None,*,model='current'):
+def build_payload(moment=None,*,model='current',protection='none'):
     global _CACHE_KEY,_CACHE_PAYLOAD
     if model not in ('current','expanded'):raise ValueError('未知研究模型')
-    moment=moment or store.now();key=_fingerprint(moment,model)
+    if protection not in ('none','trailing7') or (protection!='none' and model!='expanded'):raise ValueError('7%回撤保护仅用于扩展模型')
+    moment=moment or store.now();key=_fingerprint(moment,model,protection)
     with _CACHE_LOCK:
         if key==_CACHE_KEY and _CACHE_PAYLOAD is not None:
             payload=copy.deepcopy(_CACHE_PAYLOAD)
         else:
-            payload=_build_payload(moment,model)
-            if _fingerprint(moment,model)!=key:
+            payload=_build_payload(moment,model,protection)
+            if _fingerprint(moment,model,protection)!=key:
                 payload.update(data_stale=True,candidate_count=0,prealert_count=0)
                 for row in payload['rows']:row.update(eligible=False,prealert=False,phase='refreshing_data',reason='数据正在原子更新，下一次刷新后复核')
             else:_CACHE_KEY,_CACHE_PAYLOAD=key,copy.deepcopy(payload)
@@ -200,11 +202,11 @@ def build_payload(moment=None,*,model='current'):
     return payload
 
 
-def record_close(moment=None,*,model='current'):
+def record_close(moment=None,*,model='current',protection='none'):
     """Append actual EOD decisions; never fabricate old live records on restart."""
     moment = moment or store.now(); local = moment.astimezone(config.SHANGHAI_TZ)
     if local.weekday() >= 5 or local.hour * 60 + local.minute < config.CLOSE_RECORD: return None
-    payload = build_payload(moment,model=model) if model!='current' else build_payload(moment)
+    payload = build_payload(moment,model=model,protection=protection) if protection!='none' else build_payload(moment,model=model) if model!='current' else build_payload(moment)
     if payload['as_of'] != local.date().isoformat(): return None
     payload['mode'] = 'live_recorded'
     fingerprint = hashlib.sha256(json.dumps([payload['rule_version'], payload['rows']], sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]

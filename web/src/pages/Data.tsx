@@ -792,7 +792,7 @@ export function DataPage({
                       ))}
                     </div>
                     <p className="mt-3 text-[10px] leading-relaxed text-[var(--etf-faint)]">
-                      后端零第三方依赖、JSON 原子写、请求路径只读缓存；前端构建产物由 nginx 托管。
+                      盘中提醒来自定时报价采样，可能延迟；当日均线尚未收盘定型。
                     </p>
                   </Panel>
                 </div>

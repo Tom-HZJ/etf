@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Badge } from '@astryxdesign/core/Badge';
+import { CACHED_SUMMARY_REFRESH_MS } from '../lib/refreshPolicy';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@astryxdesign/core/Button';
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
 import { InfoTip } from '@astryxdesign/core/InfoTip';
@@ -19,15 +19,19 @@ import {
   fmtTime,
   fmtYiSigned,
   fmtShares,
+  toYi,
 } from '../lib/format';
 import { hrefFor } from '../lib/router';
 import { PageHeader, Panel, SectionHead } from '../components/Page';
 import { Delta } from '../components/Numbers';
 import { FlowBars, FlowCurve } from '../components/Spark';
+import { legacyEstimateValue } from '../lib/legacyEstimate';
+import {LegacyEstimateDates} from '../components/LegacyEstimateDates';
 import { HotStateBadge, LabelBadge, TrendBadge } from '../components/StateBadge';
 import { ErrorPanel, PanelSkeleton } from '../components/States';
 import { KlineChart } from '../components/Charts';
 import { MinuteTrendChart } from '../components/MinuteTrendChart';
+import { basketMinuteBars } from '../lib/basketDisplay';
 
 const MINUTE_INTERVALS: MinuteInterval[] = [1, 5, 15, 30, 60];
 
@@ -47,29 +51,15 @@ function TeamMinutePanel({
   const isMobile = useMediaQuery('(max-width: 767px)');
   const data = minute.data;
 
-  const bars = useMemo(() => {
-    if (!data) return [];
-    return data.series.map((point, index) => {
-      const previous = data.series[index - 1];
-      return {
-        time: point.time,
-        date: point.date,
-        open: previous?.value ?? point.value,
-        high: Math.max(point.value, previous?.value ?? point.value),
-        low: Math.min(point.value, previous?.value ?? point.value),
-        close: point.value,
-        volume: point.volume ?? 0,
-      };
-    });
-  }, [data]);
+  const bars = useMemo(() => basketMinuteBars(data), [data]);
 
   return (
     <Panel
-      title="今日分钟走势"
+      title="篮子分钟走势"
       sub={
         data
-          ? `${data.method.codes} 只篮子合成 · ${data.interval} 分钟 · ${data.count} 点 · 涨跌幅（相对首分钟）`
-          : '26 只篮子合成 · 涨跌幅（相对首分钟）'
+          ? `${data.method.codes} 只固定成分 · ${data.interval} 分钟 · ${bars.length} 个完整点 · 相对当日首个完整分钟`
+          : '26 只固定成分 · 相对当日首个完整分钟'
       }
       actions={
         <div className="chart-periods">
@@ -87,14 +77,12 @@ function TeamMinutePanel({
       }
       bodyClassName=""
       footer={
-        data?.warning ? (
-          <span className="text-[var(--etf-amber)]">上游提示：{data.warning}</span>
-        ) : (
+        <>
           <span>
-            篮子金额 = Σ(最新份额 × 分钟收盘价) / 1e8；折线为相对首分钟的涨跌幅。日/周/月合成 K 在下方「整体结构」。
-            {data?.method.missing.length ? ` 缺失 ${data.method.missing.length} 只` : ''}
+            26 只成分齐全才绘制，缺失分钟留空，不填零、不补价。涨跌幅相对当日首个完整分钟，并非大盘指数涨跌幅。
           </span>
-        )
+          {data?.warning ? <span className="block text-[var(--etf-amber)]">数据提示：{data.warning}</span> : null}
+        </>
       }
     >
       {minute.status === 'error' && !data ? (
@@ -106,10 +94,10 @@ function TeamMinutePanel({
         <div className="p-4">
           <PanelSkeleton rows={2} chart />
         </div>
-      ) : data.series.length === 0 ? (
+      ) : bars.length === 0 ? (
         <div className="space-y-2 p-6 text-center">
           <p className="text-[12px] text-[var(--etf-ink-2)]">
-            {data.warning ? `分钟走势暂不可用：${data.warning}` : '当日暂无分钟采样，下一交易时段重新采集。'}
+            {data.warning ? `分钟走势暂不可用：${data.warning}` : '等待全体成分的有效分钟数据。'}
           </p>
           <p className="text-[10px] text-[var(--etf-faint)]">不插值、不画假数据；日/周/月合成 K 仍可查看。</p>
           <Button label="稍后重试" size="sm" variant="secondary" onClick={onRetry} />
@@ -126,7 +114,8 @@ function TeamMinutePanel({
               </span>
             </div>
             <span className="mono text-[9px] text-[var(--etf-faint)]">
-              {data.as_of ? `最新 ${data.as_of}` : '—'} · 相对首分钟
+              {bars.at(-1) ? `完整数据至 ${bars.at(-1)!.time}` : '—'}
+              {data.method.latest_observed_at ? ` · 最新成分 ${data.method.latest_coverage}/${data.method.codes}` : ''}
             </span>
           </div>
           <div className="px-1 pb-1 pt-1">
@@ -134,9 +123,10 @@ function TeamMinutePanel({
               bars={bars}
               interval={data.interval}
               basis={null}
+              breakOnMissing
               mode={mode}
               height={isMobile ? 280 : 340}
-              ariaLabel={`国家队篮子 ${data.interval} 分钟涨跌幅走势，相对首分钟`}
+              ariaLabel={`国家队篮子 ${data.interval} 分钟涨跌幅走势，相对当日首个完整分钟，缺失分钟留空`}
             />
           </div>
         </>
@@ -150,15 +140,17 @@ function ScoreCell({
   value,
   hint,
   tone,
+  detail,
 }: {
   label: string;
   value: React.ReactNode;
   hint?: string;
   tone?: string;
+  detail?: string;
 }): React.JSX.Element {
   return (
     <div className="bg-[var(--etf-surface)] px-4 py-3">
-      <div className="metric__label">{label}</div>
+      <div className="metric__label flex items-center gap-1.5">{label}{detail?<InfoTip content={detail} label="今日估算口径"/>:null}</div>
       <div className={`mid-num mt-1 ${tone ?? ''}`}>{value}</div>
       {hint ? <div className="metric__hint">{hint}</div> : null}
     </div>
@@ -166,19 +158,18 @@ function ScoreCell({
 }
 
 function TeamTable({ team }: { team: TeamResponse }): React.JSX.Element {
-  const [sortBy, setSortBy] = useState<'weight' | 'flow' | 'change'>('weight');
+  const [sortBy, setSortBy] = useState<'weight' | 'flow' | 'change' | 'activity'>('weight');
   const rows = useMemo(() => {
     const sorted = [...team.rows];
-    if (sortBy === 'flow') sorted.sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0));
-    else if (sortBy === 'change') sorted.sort((a, b) => (b.change_pct ?? 0) - (a.change_pct ?? 0));
-    else sorted.sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0));
+    const key = sortBy === 'flow' ? 'amount' : sortBy === 'change' ? 'change_pct' : sortBy === 'activity' ? 'quote_amount' : 'weight';
+    sorted.sort((a,b)=>(b[key] ?? -Infinity)-(a[key] ?? -Infinity));
     return sorted;
   }, [team.rows, sortBy]);
 
   return (
     <Panel
       title="26 只篮子明细"
-      sub="份额 / 日增减 / 估算净申赎 / 权重"
+      sub={`份额截至 ${team.data_quality.shares_as_of ?? "待核实"} · 报价 ${fmtTime(team.quote_time)} 单独更新 · 成交额/量为当日累计 · 净申赎按清算日估算`}
       actions={
         <div className="group-pills">
           {(
@@ -186,6 +177,7 @@ function TeamTable({ team }: { team: TeamResponse }): React.JSX.Element {
               ['weight', '按权重'],
               ['flow', '按净申赎'],
               ['change', '按涨跌'],
+              ['activity', '按成交额'],
             ] as const
           ).map(([value, label]) => (
             <button
@@ -212,9 +204,11 @@ function TeamTable({ team }: { team: TeamResponse }): React.JSX.Element {
               <th>分组</th>
               <th className="r">价格</th>
               <th className="r">涨跌</th>
+              <th className="r">成交额 / 成交量</th>
+              <th className="r">换手率</th>
               <th className="r">份额（亿份）</th>
-              <th className="r">日增减（亿份）</th>
-              <th className="r">净申赎（亿元）</th>
+              <th className="r">份额变化（亿份）</th>
+              <th className="r">净申赎估算（亿元）</th>
               <th className="r">权重</th>
               <th className="r">市值</th>
             </tr>
@@ -230,14 +224,16 @@ function TeamTable({ team }: { team: TeamResponse }): React.JSX.Element {
                   </a>
                 </td>
                 <td className="text-[var(--etf-muted)]">{row.group}</td>
-                <td className="num r">{fmtNum(row.price, 3)}</td>
+                <td className="num r">{fmtNum(row.price, 3)}<div className="text-[9px] text-[var(--etf-faint)]">报价 {fmtTime(row.quote_time)}</div></td>
                 <td className={`num r ${deltaClass(row.change_pct)}`}>{fmtPct(row.change_pct)}</td>
-                <td className="num r">{fmtNum((row.shares ?? 0) / 1e8, 2)}</td>
+                <td className="num r">{fmtMoney(row.quote_amount)}<div className="text-[9px] text-[var(--etf-faint)]">{row.quote_volume==null?'—':`${fmtNum(row.quote_volume/10000,2)} 万手`}</div></td>
+                <td className="num r">{row.turnover==null?'—':`${fmtNum(row.turnover*100,2)}%`}</td>
+                <td className="num r">{fmtNum(toYi(row.shares), 2)}<div className="text-[9px] text-[var(--etf-faint)]">{row.shares_date ?? '日期待核实'} · {row.shares_source==='sse_settled_etf_shares'?'上交所':row.shares_source==='szse_settled_etf_shares'?'深交所':'未核实'}</div></td>
                 <td className={`num r ${deltaClass(row.share_delta)}`}>
-                  {fmtSigned((row.share_delta ?? 0) / 1e8, 2)}
+                  {fmtSigned(toYi(row.share_delta), 2)}
                 </td>
-                <td className={`num r ${deltaClass(row.amount)}`}>{fmtSigned((row.amount ?? 0) / 1e8, 2)}</td>
-                <td className="num r">{fmtNum((row.weight ?? 0) * 100, 1)}%</td>
+                <td className={`num r ${deltaClass(row.amount)}`}>{fmtSigned(toYi(row.amount), 2)}</td>
+                <td className="num r">{row.weight==null?"—":`${fmtNum(row.weight*100,1)}%`}</td>
                 <td className="num r">{fmtMoney(row.market_cap)}</td>
               </tr>
             ))}
@@ -256,7 +252,7 @@ function TeamTable({ team }: { team: TeamResponse }): React.JSX.Element {
               <div className="min-w-0">
                 <div className="truncate text-[13px] text-[var(--etf-ink)]">{row.name}</div>
                 <div className="mono text-[9.5px] text-[var(--etf-faint)]">
-                  {row.code.slice(2)} · {row.group}
+                  {row.code.slice(2)} · {row.group}<div>份额 {row.shares_date ?? "待核实"} · {row.shares_source==='sse_settled_etf_shares'?'上交所':row.shares_source==='szse_settled_etf_shares'?'深交所':'未核实'} · 报价 {fmtTime(row.quote_time)}</div>
                 </div>
               </div>
               <div className="text-right">
@@ -265,15 +261,18 @@ function TeamTable({ team }: { team: TeamResponse }): React.JSX.Element {
               </div>
             </div>
             <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-[var(--etf-faint)]">
+              <span>成交额 <span className="num text-[var(--etf-ink-2)]">{fmtMoney(row.quote_amount)}</span></span>
+              <span>成交量 <span className="num text-[var(--etf-ink-2)]">{row.quote_volume==null?'—':`${fmtNum(row.quote_volume/10000,2)}万手`}</span></span>
+              <span className="text-right">换手率 <span className="num text-[var(--etf-ink-2)]">{row.turnover==null?'—':`${fmtNum(row.turnover*100,2)}%`}</span></span>
               <span>
-                份额 <span className="num text-[var(--etf-ink-2)]">{fmtNum((row.shares ?? 0) / 1e8, 1)}亿</span>
+                份额 <span className="num text-[var(--etf-ink-2)]">{fmtNum(toYi(row.shares), 1)}亿</span>
               </span>
               <span>
                 净申赎{' '}
-                <span className={`num ${deltaClass(row.amount)}`}>{fmtSigned((row.amount ?? 0) / 1e8, 2)}亿</span>
+                <span className={`num ${deltaClass(row.amount)}`}>{fmtSigned(toYi(row.amount), 2)}亿</span>
               </span>
               <span className="text-right">
-                权重 <span className="num text-[var(--etf-ink-2)]">{fmtNum((row.weight ?? 0) * 100, 1)}%</span>
+                权重 <span className="num text-[var(--etf-ink-2)]">{row.weight==null?"—":`${fmtNum(row.weight*100,1)}%`}</span>
               </span>
             </div>
           </a>
@@ -284,7 +283,8 @@ function TeamTable({ team }: { team: TeamResponse }): React.JSX.Element {
 }
 
 export function TeamPage({ mode, refreshTick }: { mode: ThemeMode; refreshTick: number }): React.JSX.Element {
-  const team = useResource((signal) => fetchTeam(signal), [refreshTick], { pollMs: 180_000 });
+  const [now,setNow]=useState(Date.now());useEffect(()=>{const timer=window.setInterval(()=>setNow(Date.now()),15_000);return()=>window.clearInterval(timer);},[]);
+  const team = useResource((signal) => fetchTeam(signal), [refreshTick], { pollMs: CACHED_SUMMARY_REFRESH_MS });
   const [span, setSpan] = useState<Span>('day');
   const [minuteInterval, setMinuteInterval] = useState<MinuteInterval>(1);
   const teamMinute = useResource(
@@ -328,13 +328,7 @@ export function TeamPage({ mode, refreshTick }: { mode: ThemeMode; refreshTick: 
     [data],
   );
 
-  const latestIntraday = data?.intraday[data.intraday.length - 1];
-  const liveAmount = data?.live_flow?.amount ?? data?.latest_close?.amount ?? null;
-  const livePartial = data?.live_flow?.partial ?? false;
-  const intradayEmpty = (data?.intraday.length ?? 0) === 0;
-  const invalidatedWarnings = (data?.data_quality.warnings ?? []).filter((warning) =>
-    /作废|不一致|迁移/.test(warning),
-  );
+  const liveAmount = legacyEstimateValue(data?.live_flow,now,team.status==='error');
 
   return (
     <>
@@ -370,28 +364,29 @@ export function TeamPage({ mode, refreshTick }: { mode: ThemeMode; refreshTick: 
           <div className="overflow-hidden rounded-[var(--etf-radius)] border border-[var(--etf-line)] shadow-[var(--etf-shadow)]">
             <div className="grid grid-cols-2 gap-px bg-[var(--etf-line)] sm:grid-cols-3 xl:grid-cols-6">
               <ScoreCell
-                label={livePartial ? '今日估算净申赎' : '最近交易日净申赎'}
+                label="盘中估算总额"
                 value={
                   <span className={`num ${deltaClass(liveAmount)}`}>
                     {fmtYiSigned(liveAmount, 2)}
                   </span>
                 }
-                hint={`亿元 · ${livePartial ? '盘中' : data.live_flow?.date ?? data.latest_close?.date ?? '收盘'}`}
+                hint={`亿元 · 现价重估 · ${liveAmount===null?'待更新':fmtTime(data.live_flow?.quote_time)}`}
+                detail="按份额快照差×现价估算；份额日期可能滞后，不代表当日实际净申购。"
               />
               <ScoreCell
                 label={`${data.cumulative.days} 日累计`}
-                value={<Delta value={data.cumulative.amount / 1e8} kind="number" digits={1} />}
+                value={data.cumulative.days ? <Delta value={data.cumulative.amount / 1e8} kind="number" digits={1} /> : "—"}
                 hint={`自 ${data.cumulative.since ?? '—'}${data.cumulative.excluded_days > 0 ? ` · 排除 ${data.cumulative.excluded_days} 条跨日` : ''}`}
               />
               <ScoreCell
                 label="篮子总市值"
                 value={<span className="num">{fmtMoney(data.basket.total_value)}</span>}
-                hint={`估值日 ${data.basket.value_date ?? '—'}`}
+                hint={`份额 ${data.basket.value_date ?? '—'} × 报价 ${fmtTime(data.quote_time)}`}
               />
               <ScoreCell
                 label="总份额"
                 value={<span className="num">{fmtShares(data.basket.total_shares, 0)}</span>}
-                hint="份"
+                hint={`清算日 ${data.data_quality.shares_as_of ?? "—"}`}
               />
               <ScoreCell
                 label="市场涨跌"
@@ -407,12 +402,16 @@ export function TeamPage({ mode, refreshTick }: { mode: ThemeMode; refreshTick: 
               <ScoreCell
                 label="今日市值变动"
                 value={
-                  <span className={`num ${deltaClass(data.market_pnl)}`}>{fmtSigned((data.market_pnl ?? 0) / 1e8, 2)}</span>
+                  <span className={`num ${deltaClass(data.market_pnl)}`}>{fmtSigned(toYi(data.market_pnl), 2)}</span>
                 }
                 hint="亿元 · 估算"
               />
             </div>
           </div>
+
+          <LegacyEstimateDates flow={data.live_flow}/>
+
+          {data.intraday.length>0 ? <details className="panel"><summary className="cursor-pointer px-4 py-3 text-[12px] text-[var(--etf-muted)]">查看盘中估算走势</summary><div className="px-4 pb-3"><FlowCurve points={data.intraday.map(p=>({time:p.time,amount:p.amount}))} height={isMobile?180:210} label="今日份额快照口径估算走势"/><p className="mt-2 text-[10px] text-[var(--etf-faint)]">份额快照差×现价，随价格重估。</p></div></details> : null}
 
           <TeamMinutePanel
             minute={teamMinute}
@@ -542,80 +541,27 @@ export function TeamPage({ mode, refreshTick }: { mode: ThemeMode; refreshTick: 
 
           <SectionHead
             index="01"
-            title="盘中与逐日申赎"
+            title="清算份额与逐日申赎"
             actions={<span className="mono text-[9px] text-[var(--etf-faint)]">INTRADAY / DAILY FLOW</span>}
           />
           <div className="grid gap-4 xl:grid-cols-12">
             <div className="xl:col-span-7">
-              <Panel
-                title="盘中净申赎估算"
-                sub="份额差 × 现价，随价格重估；非逐笔累计"
-                actions={<Badge label={livePartial ? '盘中' : '收盘'} variant="yellow" />}
-                bodyClassName="panel__body"
-                footer={
-                  <div className="space-y-1">
-                    {!intradayEmpty ? (
-                      <div>
-                        当前估算 {fmtYiSigned(latestIntraday?.amount, 2)} 亿元，份额差{' '}
-                        {fmtSigned((latestIntraday?.share_delta ?? 0) / 1e8, 2)} 亿份。
-                        {livePartial ? '盘中金额随现价重估，收盘后以日终份额为准。' : '已使用日终份额（收盘口径）。'}
-                      </div>
-                    ) : null}
-                    {invalidatedWarnings.length > 0 ? (
-                      <div role="status" className="text-[10.5px] text-[var(--etf-amber)]">
-                        {invalidatedWarnings.join('；')}
-                      </div>
-                    ) : null}
-                  </div>
-                }
-              >
-                {intradayEmpty ? (
-                  <div className="py-6 text-center">
-                    <div className="metric__label">盘中估算暂不可用</div>
-                    <p className="mx-auto mt-2 max-w-[46ch] text-[12px] leading-relaxed text-[var(--etf-muted)]">
-                      {invalidatedWarnings.length > 0
-                        ? '此为迁移数据，已按收盘口径作废；下一交易日恢复。'
-                        : '下一交易日开盘后每 2 分钟采样（09:32 起；午休不采样）。'}
-                    </p>
-                  </div>
-                ) : (
-                  <>
-                    <div className="flex flex-wrap items-end justify-between gap-3">
-                      <div>
-                        <div className="metric__label">
-                          {livePartial ? '今日估算（盘中）' : '最近交易日估算（收盘）'}
-                        </div>
-                        <div className={`mid-num mt-1 ${deltaClass(latestIntraday?.amount)}`}>
-                          {fmtYiSigned(latestIntraday?.amount, 2)}
-                          <span className="unit">亿元</span>
-                        </div>
-                      </div>
-                      <div className="text-right text-[10px] text-[var(--etf-faint)]">
-                        <div className="mono">{data.intraday.length} 个采样点 · 单位亿元</div>
-                        <div className="mt-0.5">最近 {latestIntraday?.time ?? '—'}</div>
-                      </div>
-                    </div>
-                    <div className="mt-2">
-                      <FlowCurve
-                        points={data.intraday.map((point) => ({ time: point.time, amount: point.amount }))}
-                        height={isMobile ? 190 : 230}
-                        label={`盘中净申赎估算曲线，当前 ${fmtYiSigned(latestIntraday?.amount, 2)} 亿元`}
-                      />
-                    </div>
-                  </>
-                )}
+              <Panel title="份额更新状态" sub="交易所清算后公布，报价时间单独显示" bodyClassName="panel__body">
+                <p className="text-[14px] text-[var(--etf-ink)]">{data.shares_quality?.current_day_published ? '当日清算份额已公布' : '当日净申赎待清算数据公布'}</p>
+                <p className="mt-3 text-[12px] leading-relaxed text-[var(--etf-muted)]">最近完整份额日期：{data.data_quality.shares_as_of ?? '待核实'}。已核实 {data.shares_quality?.verified ?? 0}/{data.basket.count} 只，来源为上交所与深交所。</p>
+                <p className="mt-2 text-[11px] leading-relaxed text-[var(--etf-faint)]">顶部为盘中快照估算；下方净申赎记录按交易所清算日期更新。</p>
               </Panel>
             </div>
 
             <div className="xl:col-span-5">
               <Panel
                 title="逐日净申赎"
-                sub={`近 ${Math.min(20, data.history.length)} 条记录 · 亿元 · 金色虚线为跨日记录`}
+                sub={`近 ${Math.min(20, data.history.length)} 条清算日记录 · 亿元 · 跨日不计入累计`}
                 actions={
                   <div className="flex items-center gap-2">
                     {data.latest_close ? (
                       <span className="state-badge badge-muted">
-                        {data.latest_close.date} 收盘
+                        {data.latest_close.date} 清算日
                         {data.latest_close.gap_days > 1 ? ` · 跨 ${data.latest_close.gap_days} 日` : ''}
                       </span>
                     ) : null}
@@ -649,7 +595,7 @@ export function TeamPage({ mode, refreshTick }: { mode: ThemeMode; refreshTick: 
                           </td>
                           <td className={`num r ${deltaClass(day.amount)}`}>{fmtYiSigned(day.amount, 2)}</td>
                           <td className={`num r ${deltaClass(day.share_delta)}`}>
-                            {fmtSigned((day.share_delta ?? 0) / 1e8, 2)}亿
+                            {fmtSigned(toYi(day.share_delta), 2)}亿
                           </td>
                           <td className="num r text-[10.5px]">
                             <span className="rise">{day.inflow}</span>
@@ -678,7 +624,7 @@ export function TeamPage({ mode, refreshTick }: { mode: ThemeMode; refreshTick: 
                     <thead>
                       <tr>
                         <th>报告期</th>
-                        <th className="r">净申赎（亿元）</th>
+                        <th className="r">净申赎估算（亿元）</th>
                         <th className="r">净申赎比例</th>
                         <th>标记</th>
                         <th className="r">基金数</th>
@@ -731,9 +677,9 @@ export function TeamPage({ mode, refreshTick }: { mode: ThemeMode; refreshTick: 
                     <span className="kv-line__value">{fmtTime(data.fetched_at)}</span>
                   </div>
                   <div className="kv-line">
-                    <span className="kv-line__label">份额差（今日盘中）</span>
+                    <span className="kv-line__label">份额差（最近清算日）</span>
                     <span className="kv-line__value">
-                      {fmtShareDelta(data.live_flow?.share_delta ?? data.latest_close?.share_delta)}
+                      {fmtShareDelta(data.latest_close?.share_delta)}
                     </span>
                   </div>
                 </div>
@@ -757,7 +703,7 @@ export function TeamPage({ mode, refreshTick }: { mode: ThemeMode; refreshTick: 
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-[var(--etf-faint)]">
-            <span>提示：盘中估算使用最近一次份额快照 × 现价，收盘后会被日终数据覆盖。</span>
+            <span>提示：成交额、量和换手率来自二级市场行情，不能识别国家队买卖；份额与净申赎按交易所清算日更新。</span>
             <a className="nav-action" href={hrefFor('market', { code: 'sh510300' })}>
               看 510300 行情 <ChevronRight size={12} aria-hidden="true" />
             </a>
