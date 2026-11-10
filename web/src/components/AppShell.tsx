@@ -4,7 +4,7 @@ import { IconButton } from '@astryxdesign/core/IconButton';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { LayoutGrid, Landmark, LineChart, LogOut, Moon, Radar, RefreshCw, Sun, Database } from 'lucide-react';
 import type { Quote, Session, SourceHealth, AuthMode } from '../api/types';
-import { deltaClass, fmtPct, fmtNum, fmtTime, sessionLabel } from '../lib/format';
+import { deltaClass, fmtPct, fmtNum, fmtDateTime, sessionLabel } from '../lib/format';
 import { ROUTES, hrefFor, routeMeta, type RouteKey } from '../lib/router';
 import { prefetchRoute } from '../lib/prefetch';
 import type { ThemeMode } from '../lib/hooks';
@@ -96,7 +96,7 @@ function Rail({
           </button>
         </div>
         <div className="mono mt-3 flex items-center justify-between text-[9px] tracking-[0.08em] text-[var(--etf-faint)]">
-          <span>v2.12.0 · CONTRACT v2.2</span>
+          <span>v2.19.0 · CONTRACT v2.2</span>
           <span>SHANGHAI</span>
         </div>
         <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-[var(--etf-line)] pt-2.5">
@@ -140,7 +140,7 @@ function TopBar({
           <Brand compact />
         </div>
         <div className="hidden items-center gap-2 lg:flex">
-          <span className="eyebrow eyebrow--muted">RESEARCH DESK</span>
+          <span className="eyebrow eyebrow--muted">ACTION DESK</span>
           <span className="divider-dot" aria-hidden="true" />
           <span className="text-[11.5px] tracking-[0.08em] text-[var(--etf-muted)]">{meta.label}</span>
         </div>
@@ -156,7 +156,7 @@ function TopBar({
             {sessionLabel(session)}
           </span>
           <span className="mono hidden text-[10px] tracking-[0.06em] text-[var(--etf-faint)] sm:inline">
-            {asOf ? `${fmtTime(asOf)} CST` : '—'}
+            {asOf ? `行情 ${fmtDateTime(asOf)}` : '—'}
           </span>
           <MockChip />
           <IconButton
@@ -296,7 +296,7 @@ export function AppShell({
             <footer className="mt-10 border-t border-[var(--etf-line)] pt-4 text-[10.5px] leading-relaxed text-[var(--etf-faint)]">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span>ETF 观察台 · 私有研究站 · 数据仅供研究，不构成投资建议</span>
-                <span className="mono">Asia/Shanghai · v2.12.0</span>
+                <span className="mono">Asia/Shanghai · v2.19.0</span>
               </div>
             </footer>
           </div>

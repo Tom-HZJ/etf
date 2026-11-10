@@ -1,9 +1,9 @@
 """国家队篮子分钟序列：26 只 ETF 用最新总份额加权分钟收盘价（亿元）。
 
-- 权重：``national/daily.json`` 最近可用的总份额（逐只取最新非空值）；
+- 权重：交易所同一清算日完整26只份额；旧快照聚合缓存不可复用；
 - 每分钟：``value = Σ(shares_i × minute_close_i) / 1e8``，与日线合成口径一致；
 - 分钟数据复用 ``sources.fetch_minute``（东财主/新浪次），26 只并发 ≤8、单只超时 3s；
-- 时间对齐：某只缺该分钟时不计入该分钟；整只无数据/失败写入 ``method.missing``；
+- 固定成员：每个分钟必须全体成分与有效份额齐全；缺失分钟不合成、不填零、不补价；
 - 缓存 ``data/team-minute/<interval>.json``：盘中 60s、收盘后 30min；
 - 失败/无数据返回空 ``series`` + ``warning``（不抛 500）。
 """
@@ -11,12 +11,14 @@
 from __future__ import annotations
 
 import logging
+import math
+from datetime import datetime
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Mapping, Sequence
 
-from . import config, sources, store
+from . import config, sources, store, settled_shares
 
 LOG = logging.getLogger("etfmon.team_minute")
 
@@ -25,6 +27,7 @@ FETCH_TIMEOUT_S = 3
 CACHE_TTL_INTRADAY_S = 60
 CACHE_TTL_CLOSED_S = 30 * 60
 NEGATIVE_TTL_S = 60
+COMPOSITION_VERSION = "fixed-complete-basket-v2"
 
 UPSTREAM_WARNING = "上游暂时不可用，稍后重试"
 NO_DATA_WARNING = "暂无该篮子分钟数据"
@@ -46,12 +49,35 @@ def load_cache(interval: int) -> dict[str, Any] | None:
     payload = store.read_json(cache_path(interval), None)
     if not isinstance(payload, dict):
         return None
-    return payload
+    if not _verified(payload) or payload.get('shares_basis')!=settled_shares.VERSION:return None
+    weights,date=latest_shares()
+    return payload if payload.get('share_date')==date and payload.get('share_weights')==weights else None
+
+
+def _verified(payload: Mapping[str, Any]) -> bool:
+    method = payload.get("method") or {}
+    if method.get("version") != COMPOSITION_VERSION or method.get("codes") != len(config.TEAM_CODES):
+        return False
+    return all(
+        isinstance(p, dict) and p.get("members") == len(config.TEAM_CODES)
+        and _positive(p.get("value")) is not None
+        for p in payload.get("series") or []
+    )
+
+
+def _positive(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) and number > 0 else None
 
 
 def is_fresh(payload: Mapping[str, Any], now: Any = None) -> bool:
     """缓存是否新鲜：盘中 60s（且同日），其余时间 30min。"""
     moment = now or store.now()
+    if not _verified(payload):
+        return False
     fetched = store.parse_iso(payload.get("fetched_at"))
     if fetched is None:
         return False
@@ -73,7 +99,9 @@ def _save(interval: int, payload: Mapping[str, Any]) -> None:
 def latest_shares(days: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None) -> tuple[dict[str, float], str | None]:
     """返回 ``({code: shares}, 最新份额日期)``，逐只取最近一个非空份额。"""
     if days is None:
-        days = (store.load_daily().get("days") or {})  # type: ignore[assignment]
+        bundle=settled_shares.read_bundle()
+        date=bundle['latest_complete']
+        return {c:r['shares'] for c,r in bundle['complete'].get(date,{}).items()},date
     dates = sorted((str(date) for date in days), reverse=True)
     if not dates:
         return {}, None
@@ -86,7 +114,7 @@ def latest_shares(days: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = N
                 value = float(shares) if shares is not None else 0.0
             except (TypeError, ValueError):
                 value = 0.0
-            if value > 0:
+            if math.isfinite(value) and value > 0:
                 weights[code] = value
                 break
     return weights, dates[0]
@@ -121,67 +149,114 @@ def compose(
     limit: int = config.MINUTE_LIMIT_DEFAULT,
     *,
     errors: Mapping[str, str] | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
-    """把 26 只分钟 K 合成为篮子序列（亿元）。"""
+    """Only comparable, complete fixed-membership points are basket prices.
+
+    An absent component is unknown, never a zero-valued holding. No fill-forward
+    or changing-cohort normalization is used. Conflicting duplicate prices are
+    treated as missing rather than counted twice or chosen arbitrarily.
+    """
     errors = errors or {}
+    codes = tuple(config.TEAM_CODES)
+    buckets: dict[str, dict[str, tuple[float, float]]] = {}
     missing: list[str] = []
-    buckets: dict[str, list[float]] = {}
-    total_codes = len(config.TEAM_CODES)
-    for code in config.TEAM_CODES:
-        bars = results.get(code) or []
-        shares = weights.get(code)
-        if not bars or not shares:
-            missing.append(code)
-            continue
-        for bar in bars:
-            time_text = str(bar.get("time") or "")
-            close = bar.get("close")
-            if not time_text or close is None:
-                continue
+    invalid = 0
+    for code in codes:
+        shares = _positive(weights.get(code))
+        seen: dict[str, tuple[float, float] | None] = {}
+        for bar in results.get(code) or []:
+            text = str(bar.get("time") or "")
             try:
-                close_value = float(close)
-                volume = float(bar.get("volume") or 0.0)
-            except (TypeError, ValueError):
+                stamp = datetime.strptime(text, "%Y-%m-%d %H:%M")
+                if stamp.strftime("%Y-%m-%d %H:%M") != text:
+                    raise ValueError("noncanonical minute")
+                minute = stamp.hour * 60 + stamp.minute
+                if not (570 <= minute <= 690 or 780 <= minute <= 900):
+                    raise ValueError("outside session")
+            except ValueError:
+                invalid += 1
                 continue
-            bucket = buckets.setdefault(time_text, [0.0, 0.0])
-            bucket[0] += float(shares) * close_value
-            bucket[1] += volume
+            # Record observed time even when that component has invalid data.
+            buckets.setdefault(text, {})
+            price = _positive(bar.get("close"))
+            try:
+                volume = float(bar.get("volume") or 0)
+            except (TypeError, ValueError, OverflowError):
+                volume = -1
+            if price is None or not math.isfinite(volume) or volume < 0:
+                seen[text] = None
+                invalid += 1
+                continue
+            item = (price, volume)
+            if text in seen and seen[text] != item:
+                seen[text] = None
+                invalid += 1
+            else:
+                seen[text] = item
+        if shares is None or not any(v is not None for v in seen.values()):
+            missing.append(code)
+        if shares is not None:
+            for text, item in seen.items():
+                if item is not None:
+                    buckets[text][code] = (shares * item[0], item[1])
     series: list[dict[str, Any]] = []
-    first_value: float | None = None
-    for time_text in sorted(buckets):
-        total_value, volume = buckets[time_text]
-        value = round(total_value / 1e8, 4)
-        if first_value is None:
-            first_value = value
-        change = round(value / first_value - 1, 6) if first_value else None
-        series.append(
-            {
-                "time": time_text,
-                "date": time_text[:10],
-                "value": value,
-                "change_pct": change,
-                "volume": round(volume, 2),
-            }
-        )
+    incomplete: list[dict[str, Any]] = []
+    forming: list[str] = []
+    # Provider labels minute bars by their END time (observed one minute ahead
+    # during collection). A future-end candle has not closed yet.
+    cutoff = (now or store.now()).strftime("%Y-%m-%d %H:%M")
+    for text, members in sorted(buckets.items()):
+        if text > cutoff:
+            forming.append(text)
+            continue
+        absent = [c for c in codes if c not in members]
+        if absent or not codes:
+            incomplete.append({"time": text, "present": len(members), "missing": absent})
+            continue
+        value = round(math.fsum(v[0] for v in members.values()) / 1e8, 4)
+        if _positive(value) is None:
+            invalid += 1
+            continue
+        series.append({"time": text, "date": text[:10], "value": value,
+                       "change_pct": None, "volume": round(math.fsum(v[1] for v in members.values()), 2),
+                       "members": len(codes)})
     if limit and len(series) > limit:
         series = series[-limit:]
-    if not series:
+    bases: dict[str, float] = {}
+    for point in series:
+        base = bases.setdefault(point["date"], point["value"])
+        point["change_pct"] = round(point["value"] / base - 1, 6)
+    latest = max(buckets, default=None)
+    coverage = len(buckets[latest]) if latest else 0
+    if incomplete:
+        warning = f"{len(incomplete)} 个分钟成分未齐，未绘制；最新 {coverage}/{len(codes)} 只"
+    elif not series:
         warning = UPSTREAM_WARNING if errors else NO_DATA_WARNING
-    elif missing:
-        warning = f"{len(missing)} 只基金缺少分钟数据：{','.join(missing[:8])}"
     else:
         warning = None
+    if forming:
+        warning = (warning + "；" if warning else "") + "进行中的分钟尚未收盘，暂不绘制"
+    if missing and buckets:
+        warning = f"{len(missing)} 只基金缺少有效分钟数据或份额；" + (warning or "等待全体成分补齐")
     return {
-        "interval": None,  # 由调用方填充
+        "interval": None,
         "count": len(series),
         "as_of": series[-1]["time"] if series else None,
         "source": "unknown",
         "warning": warning,
         "method": {
+            "version": COMPOSITION_VERSION,
             "unit": "亿元",
             "weighting": "latest shares × minute close",
-            "codes": total_codes,
-            "missing": missing,
+            "alignment": "all_members_required",
+            "baseline": "first_complete_displayed_minute_per_day",
+            "codes": len(codes), "missing": missing,
+            "latest_observed_at": latest, "latest_coverage": coverage,
+            "omitted_count": len(incomplete),
+            "incomplete": incomplete[-limit:] if limit else incomplete,
+            "invalid_rows": invalid,
+            "forming": forming,
         },
         "series": series,
     }
@@ -250,6 +325,8 @@ def _build_payload(interval: int, limit: int, *, use_cache: bool = True) -> dict
         payload["source"] = "+".join(dict.fromkeys(sources_by_code.values())) or "unknown"
         payload["fetched_at"] = store.iso_now()
         payload["share_date"] = share_date
+        payload["share_weights"] = weights
+        payload["shares_basis"] = settled_shares.VERSION
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         if payload["series"]:
             _save(interval, payload)
@@ -281,16 +358,19 @@ def _empty_response(
     cached: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     """失败时优先返回旧缓存，否则空序列。"""
-    if cached is not None:
+    if cached is not None and _verified(cached):
         series = list(cached.get("series") or [])
         if limit and len(series) > limit:
             series = series[-limit:]
         if series:
             return {
+                "fetched_at": cached.get("fetched_at"),
                 "interval": interval,
                 "count": len(series),
                 "as_of": series[-1]["time"],
                 "source": str(cached.get("source") or "unknown"),
+                "shares_basis": cached.get("shares_basis"),
+                "share_date": cached.get("share_date"),
                 "warning": f"{warning}（当前展示 {cached.get('fetched_at') or '最近一次'} 的缓存）",
                 "method": cached.get("method")
                 or {
@@ -324,8 +404,10 @@ def get_team_minute(interval: int, limit: int = config.MINUTE_LIMIT_DEFAULT) -> 
     except (OSError, ValueError) as exc:
         LOG.warning("团队分钟读取/合成失败：%s", exc)
         return _empty_response(interval, limit, UPSTREAM_WARNING, load_cache(interval))
-    # 只返回契约字段（内部 fetched_at/share_date 不对外）
+    # Dated public share basis is separate from the minute source timestamp.
     return {
+        "shares_basis": payload.get("shares_basis"),
+        "share_date": payload.get("share_date"),
         "interval": payload.get("interval") or interval,
         "count": int(payload.get("count") or 0),
         "as_of": payload.get("as_of"),

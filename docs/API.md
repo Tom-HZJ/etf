@@ -1,5 +1,115 @@
 # Source API overview
 
+## User sector exclusions — v2.16.2
+
+The user explicitly excludes 建材159745, 房地产512200 and 基建516950 from
+trading. `trade_scope.user_excluded_codes` and `user_excluded_sectors` expose
+this independent scope rule. Exclusions apply before plan/history reads and to
+every alert, day buy-point and recent-event projection, including old snapshots.
+The front end also rejects excluded day points and hides trade/replay markers
+for those symbols. Raw quotes, price/holdings history, append-only event records
+and the existing general watchlist remain unchanged. The full26-member national
+basket and same-index representative policy remain intact. No orders or forced
+simulated fills are created; entry/exit conditions for other ETFs are unchanged.
+
+## Conditional entries and same-index representatives — v2.16.1
+
+There is no daily buy quota, calendar buy or automatic entry from selecting a
+fund. The existing own-entry algorithm and minute-sample checks must pass;
+otherwise no buy point is emitted. The daily first-point policy only suppresses
+repeated notices and does not force any daily purchase.
+
+The quote collector selects the largest monitored, verified same-index ETF by
+`shares × latest price` (CNY), a disclosed estimate of secondary-market size,
+not reported NAV assets, daily turnover or trading volume. All alternatives
+must have valid positive finite shares/price and fresh same-day source times.
+Missing/stale/partial comparisons suppress that group's entries; no smaller
+fund is substituted because its feed or signal is more convenient. The first
+complete comparison is frozen for that day and rechecked the next day, using
+the existing quotes with no extra source calls. Selection is independent of
+entry signals and historical returns, and creates no synthetic point or fill.
+
+Verified alternative sets are 科创50 (588000/588080/588050) and 创业板指数
+(159915/159952/159977). 159949 tracks 创业板50, a distinct index confirmed by
+[the issuer](https://www.huaan.com.cn/funds/159949/); it is not merged. Current
+scope is the monitored pool, not a claim of exhaustive whole-market coverage.
+
+`trade_scope.duplicate_codes` excludes non-representative alternatives from
+live plans, alerts, visible buy records and trade-marker UI; original event
+journals remain unchanged. `trade_scope.representatives` records the policy,
+date, selected codes, source times and full size comparisons. The 19 context-
+only national-team members remain excluded from trades, and the full26-member
+basket/quote/share/flow collection is unchanged. API reads remain read-only.
+
+## First actual buy points and trading scope — v2.16.0
+
+`GET /api/research/actions` additionally returns `buy_point_policy` and
+`buy_points`. Policy `first-actual-buy-per-etf-day-v1` retains one earliest
+actual recorded buy discovery per code/model/protection/date. The quote
+collector initializes the index once from existing real event journal files;
+there is no retrospective computation from price history. Repeated episodes,
+restart gaps and changing current prices never overwrite the first point's
+event ID, `trigger_time`, `observed_at` or `reference_price`. Original event
+files and version labels remain unchanged. `active` describes current
+conditions separately; old/invalid conditions never become a current buy
+recommendation. GET remains read-only.
+
+The front end notifies only unacknowledged first discoveries less than3minutes
+old with currently fresh/valid own conditions; repeated episodes cannot
+re-notify that day. Acknowledgement is local to the browser; unavailable
+browser storage cannot persist it across reloads. Old points remain in a
+collapsed day record. A point opens the same-page1m chart and a separate
+marker at the actual discovery minute (`observed_at`) and original reference price, with absolute
+price text. The original quote/source timestamp remains in `trigger_time`; a
+late-received quote must not move the discovery marker into an earlier minute. It does not create an OHLC bar, a fill, or a daily confirmation.
+
+`trade_scope.policy=team-context-except-tech-v1` exposes the19
+`excluded_codes` and7 `team_exceptions`. All national-team basket members
+except 科创50/创业板 are excluded from live trade plans and alert/point
+projections, including pre-upgrade snapshots. Raw quotes, daily/minute history,
+the full26-member basket/flow calculations, watchlist and prior research/event
+records remain available. Historical engines and entry/exit conditions are
+unchanged. There is no mandatory broad-market filter or external notification.
+
+## Durable simulated trades and today's exits — v2.19.0
+
+For the active expanded/none desk, `position_basis=simulated_ledger` and
+`paper_ledger` exposes reference-price simulated trades since2026-11-10.
+SQLite `research/paper/trades.sqlite3` stores immutable buy observations and
+an optional subsequent exit observation, including original event IDs, times,
+prices, stop/target and reasons. Starting-day existing eligible first buy
+discoveries are adopted at their original recorded references, never at today's
+latest price. No earlier replay trades, quantity, capital or fee assumptions
+are imported. One buy per ETF/day and one open position per ETF; duplicate
+observations, API reads and restarts cannot double-fill. T+1 prevents same-day
+sales. Subsequent actual sell/risk discoveries close the simulation at their
+observed quote reference, including observations awaiting daily confirmation;
+this is user-selected paper execution, not a confirmed close or broker fill.
+Daily replay engines are unchanged. Existing ledger holdings remain monitored
+for exit if their representative peer changes; new buys remain scope-filtered.
+
+`exit_point_policy=first-actual-exit-per-position-kind-day-v1` and `exit_points`
+retain real discoveries separately from the recent ring, with first original
+time/price per ETF/entry-day/kind/confirmation. Historical events can be restored
+from journals and ledger observations only, never recalculated from prices.
+The desk displays today's sell/stop records, concise cause, reference price,
+simulated status and same-page minute markers. No event means an explicit empty
+state, never a fabricated daily sell. Confirmed clearing and national basket
+data are unaffected. API remains authenticated and read-only; only the existing
+quote collector writes SQLite and derived JSON under its data lock.
+
+## Action desk: actual intraday observations
+
+`GET /api/research/actions?model=current|expanded&protection=none|trailing7` uses the existing authentication; trailing7 is permitted only with expanded. It reads the collector snapshot only, without writes or source requests. Response includes rows, current source quote time, discovery time, reference price, observation/exit/stop levels, simulated-position basis and today's actually recorded event history. Empty/unavailable data never becomes a fabricated signal.
+
+The quote collector reuses the existing20s feed. Separate own-price plans use only complete prior daily bars and the original v4/v5 engines. Simulated positions provide exit and risk references; close-based stops/targets remain pending close confirmation, while optional live7percent protection is explicitly an intraday reference. Its known peak ratchets the previous complete position high with the already-known current quote day high and persists across polling/source fallback. Only the CURRENT quote price tests that line; an earlier low never triggers a later-known higher line. Daily historical7percent replay remains unchanged. T+1 is enforced. No real holdings, accounts or orders are connected.
+
+A buy observation requires six consecutive elapsed minutes of distinct quote samples (at least two source timestamps, a latter-half observation and15seconds coverage per minute). The latest sampled close must exceed the previous five sampled closes, provisional own MA5/10 direction must turn up, and price must remain inside prior-known MA10/ATR risk geometry. A fresh own cross, yesterday's pending buy or a still-unexpired v5 window is required; consumed/expired alignment cannot rearm indefinitely. The current quote must still satisfy the conditions at discovery. This is a new watch hypothesis, not a promoted intraday trading strategy or an exchange1m OHLC bar.
+
+Source times must be current, no more than90s old and not in the future. Auction, lunch, postmarket, missing intervals and quote/daily price-basis conflicts block emphasis. Earliest opening buy observation requires six elapsed sample minutes. Current quote changes can withdraw an observation. `trigger_time` is the current source timestamp at discovery, `observed_at` is the actual collector time, and `basis_time` identifies the earlier completed sample minute. No historical minute alerts are backfilled on deployment.
+
+Collector-only files: `research/intraday/state.json`, `latest.json`, and append-only `events/<date>/<id>.json`. Source-repeat deduplication and episode deduplication preserve the first observed reference price. A restart gap over90s resets active episodes. API and browser independently withdraw stale/lunch/closed-session emphasis. Daily historical B/S, prior archives, data collection, authenticated boundaries and user preferences stay separate.
+
 All application routes use the existing application authentication, except the public health check. Backend listens on loopback by default. GET reads do not start the maintenance worker.
 
 - `/api/health`: version, trade date, session and source health.
@@ -51,3 +161,82 @@ Default research and replay use `self-early-turn-v4/protected-bite-v2`, own MA5/
 ### v2.12 expanded opportunities
 
 `/api/research?model=expanded` and `/api/research/replay?model=expanded` expose `self-cross-window-v5[/protected-bite-v2]`. Research supports `current|expanded`; replay additionally supports exact `legacy` v3. Unknown model values return400. Default API behavior remains v4. Research responses identify `model`, `model_label`, `model_warning`; replay additionally exposes `entry_limits` and `model_status: experimental_expanded`. Caches include model identity. The five-session window includes the cross day, invalidates when MA5 is no longer above MA10, and cannot renew on expiry without a fresh cross. Close confirmation still requires rising own MA10, close above MA10, distance up to2ATR and initial risk up to3ATR. The next open must pass the same prior-known limits. Exits are unchanged. The wider model is a user-selectable research hypothesis with worse observed historical loss/drawdown/giveback, not an endorsed winner. No extra pullback or index/MA30 gates are active. Actual daily close records are appended under distinct v4/v5 names; no historical live records are fabricated. Evaluation remains version-specific to v4 and is not shown as v5 evidence.
+
+
+### v2.13 optional position drawdown guard
+
+Research and replay accept `protection=none|trailing7`. `trailing7` is valid only for `model=expanded`; other combinations or unknown protection values return400. Defaults remain unprotected. Research rule version gains `-drawdown7`, replay gains `/prior-high-7pct-v1`; model/protection/cutoff/cost cache identities are distinct.
+
+The guard uses the highest price known through the previous completed holding session times0.93. Entry-day exits remain T+1 locked. A later gap below the line references the observed open (`execution_basis: gap_open`); otherwise a daily low touching the line references that line as a hypothesis (`execution_basis: stop_assumption`, chart label S-touch). Protective events carry `timing: intraday_estimate`. Never use the same bar high to tighten before testing its low. `drawdown_guard` contains limit, basis, execution assumption, protective events and ambiguous same-day-new-high dates. Open positions expose `peak_high` and `drawdown_stop` for the next session. Existing close-based exits retain next-open references.
+
+This is per position, with subsequent independent entries allowed; it is not an equity circuit breaker, live stop validation, account connection or guarantee of7percent maximum loss. The daily dataset cannot establish same-day high/low ordering or actual intraday fills. Unprotected v5 and v4/v3 results remain exact. Actual daily records append a distinct protection version, without fabricated historical live records.
+# Basket minute completeness — v2.15.1
+
+`GET /api/team/minute` uses a fixed basket of all configured members and
+latest valid positive finite shares. `method.version=fixed-complete-basket-v2`;
+`method.alignment=all_members_required`. Each emitted point has `members=26`
+(the configured count). Missing or invalid component prices are unknown, not
+zero. A timestamp with any missing member is omitted, never filled or
+renormalized. Conflicting duplicates are invalid; identical duplicates are
+counted once. End-labelled bars later than the current Shanghai minute have
+not closed and are withheld.
+
+`method.incomplete` records omitted timestamps and their missing codes;
+`latest_observed_at`, `latest_coverage`, `omitted_count`, `forming` and
+`invalid_rows` describe collection completeness. `as_of` is the last complete
+displayed point, not the newest incomplete source timestamp. `change_pct`
+resets to the first complete displayed minute of each date. This is a
+synthetic basket's intraday move, not a broad-market index return or proof of
+national-team buying. No inference about identities is made.
+
+Pre-fix aggregate caches cannot establish per-point membership and are not
+reused, including on source failure. A verified cache can be returned with an
+explicit cached-data warning. Raw prices, shares and historical records are
+preserved. The front end shows only the latest available date, verifies the
+composition version/member counts, leaves missing minutes blank, and splits
+line segments at gaps. The exchange time axis remains fixed.
+
+### Legacy snapshot estimate restored (v2.18.1)
+
+The user explicitly requested removal of v2.18's order-flow feature and
+restoration of the original snapshot estimate. `trading_flow` and its dedicated
+worker are removed. Previously collected source archives remain untouched.
+
+`GET /api/team.live_flow` reports the original sum of
+`(latest quoted shares − latest saved snapshot shares before today) × latest price`.
+It requires all26 valid current-day quotes, with freshness/future-date checks.
+`basis=legacy_snapshot_difference`, `shares_date_verified=false`,
+`is_confirmed_current_day_flow=false` and `previous_day_basis=snapshot_label`
+make clear that the dates label observations/snapshots, not verified same-day
+fund creation/redemption. `quote_time` is the oldest constituent quote time.
+A real zero is retained; absent/stale/partial data remain null. UI labels this
+今日估算总额 / 快照估算, never falls back to yesterday's cleared amount, and
+provides a compact definition tooltip. The actual recorded `intraday` estimate
+series is available in a collapsed optional curve.
+
+Official cleared `latest_close`, history, per-fund share dates and flow values
+are unchanged and separate. Existing20second quote collection and120second
+legacy sampling are reused, with no extra upstream requests. API reads cannot
+create samples or modify histories. This estimate does not enter trade rules
+or identify the investor.
+
+### Date evidence and Overview consistency (v2.18.2)
+
+`live_flow.date_evidence` records both raw actual share dates as null when no
+source date is supplied. A saved snapshot filename/date is exposed only as
+`snapshot_label`. `matching_cleared_dates` lists complete fixed-basket numeric
+matches against already available official records; this is reference evidence,
+not independent proof of an undated field effective date. A reference range is
+available only when both matches are unique, and remains `verified=false`.
+Future complete dates, missing members and non-matches cannot establish dates.
+`valuation_date` identifies the price date, with an explicit current-day-flow
+false flag and snapshot-label mismatch status. Neither raw history nor numeric
+estimate changes.
+
+Overview `national.snapshot_estimate` shares the Team calculation and metadata.
+The national headline card renders it through the same freshness guard, with no
+fallback to the previous clearing day. Legacy `today_flow`/`flow_date` continue
+to hold the separate cleared result for compatibility. Brief text calls the
+new amount snapshot revaluation; historical clearing data still determine its
+existing tone, so this provisional observation is not an entry or market gate.
+API reads use local evidence only and add no source requests.

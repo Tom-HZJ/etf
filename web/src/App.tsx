@@ -1,3 +1,4 @@
+import { CACHED_SUMMARY_REFRESH_MS } from './lib/refreshPolicy';
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { Theme } from '@astryxdesign/core/theme';
 import { neutralTheme } from '@astryxdesign/theme-neutral/built';
@@ -66,7 +67,7 @@ function AuthenticatedApp({
 }): React.JSX.Element {
   const online = useOnline();
   const [refreshTick, setRefreshTick] = useState(0);
-  const overview = useResource((signal) => fetchOverview(signal), [], { pollMs: 120_000 });
+  const overview = useResource((signal) => fetchOverview(signal), [], { pollMs: CACHED_SUMMARY_REFRESH_MS });
   const data = overview.data;
   const { key, params } = route;
 

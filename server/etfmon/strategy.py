@@ -70,8 +70,10 @@ def scan(data,mode=ENTRY_MODE):
               'today':today,'fast':c['fast'],'strong':c['strong']}
     return {'contexts':cs,'events':events,'state':last or {}}
 
-def simulate(bars,cs,events,year,cost_bps=20,exit_mode=EXIT_MODE,*,start=None,end=None,entry_limits=None):
+def simulate(bars,cs,events,year,cost_bps=20,exit_mode=EXIT_MODE,*,start=None,end=None,entry_limits=None,trailing_drawdown=None):
     if exit_mode not in ('bite_1_5R_10','protected_bite_1_5R_10'):raise ValueError('Unknown exit mode')
+    if trailing_drawdown is not None and (isinstance(trailing_drawdown,bool) or not 0<trailing_drawdown<1):raise ValueError('Invalid trailing drawdown')
+    guard={'limit':trailing_drawdown,'basis':'prior_completed_session_high','execution':'daily_ohlc_hypothesis','events':[],'ambiguous_new_high_dates':[]} if trailing_drawdown is not None else None
     limits=entry_limits or PARAMETERS
     by_date={}
     for event in events:by_date.setdefault(event['date'],event)
@@ -94,6 +96,7 @@ def simulate(bars,cs,events,year,cost_bps=20,exit_mode=EXIT_MODE,*,start=None,en
                     position={'entry_signal_date':signal['date'],'entry_date':row['date'],'entry_price':op,'entry_index':i,
                               'path':signal['path'],'initial_stop':stop,'trailing_stop':stop,'peak_close':op,
                               'risk_unit':risk,'target_price':op+1.5*risk,'profit_armed':False,'trade_id':len(trades)+1}
+                    if guard is not None:position['peak_high']=op
                     fills.append({'date':row['date'],'side':'buy','price':op,'signal_date':signal['date'],'reason':signal['reason'],'trade_id':position['trade_id']})
             elif position:
                 signal.update(status='referenced',reference_date=row['date'],reference_price=op)
@@ -104,6 +107,27 @@ def simulate(bars,cs,events,year,cost_bps=20,exit_mode=EXIT_MODE,*,start=None,en
                 nav*=1+value
                 fills.append({'date':row['date'],'side':'sell','price':op,'signal_date':signal['date'],'reason':signal['reason'],'trade_id':position['trade_id']})
                 position=None
+        if position and guard is not None:
+            # Today's high must never tighten a stop before today's low is tested.
+            stop=position['peak_high']*(1-trailing_drawdown)
+            if i>position['entry_index']:
+                if row['low']>stop and row['low']<=max(position['peak_high'],row['high'])*(1-trailing_drawdown):guard['ambiguous_new_high_dates'].append(row['date'])
+                price=row['open'] if row['open']<=stop else stop if row['low']<=stop else None
+                if price is not None:
+                    basis='gap_open' if row['open']<=stop else 'stop_assumption'
+                    reason=f'跳空低于前日已知高点{trailing_drawdown:.0%}保护线，按实际开盘参考' if basis=='gap_open' else f'触及前日已知高点{trailing_drawdown:.0%}保护线（日线触价假设）'
+                    signal={'date':row['date'],'side':'sell','price':price,'reason':reason,'path':position['path'],'invalidation':stop,
+                            'status':'referenced','reference_date':row['date'],'reference_price':price,'timing':'intraday_estimate','execution_basis':basis}
+                    signals.append(signal)
+                    value=price*(1-half)/(position['entry_price']*(1+half))-1
+                    trades.append({**{k:v for k,v in position.items() if k!='entry_index'},'exit_signal_date':row['date'],'exit_date':row['date'],
+                                   'exit_price':price,'exit_reason':reason,'held_sessions':i-position['entry_index'],'net_return':value,'execution_basis':basis})
+                    fills.append({'date':row['date'],'side':'sell','price':price,'signal_date':row['date'],'reason':reason,'trade_id':position['trade_id'],'timing':'intraday_estimate','execution_basis':basis})
+                    guard['events'].append({'date':row['date'],'stop':stop,'reference_price':price,'execution_basis':basis})
+                    nav*=1+value;position=None
+            if position:
+                position['peak_high']=max(position['peak_high'],row['high'])
+                position['drawdown_stop']=position['peak_high']*(1-trailing_drawdown)
         if position:
             position['peak_close']=max(position['peak_close'],row['close'])
             if exit_mode=='protected_bite_1_5R_10' and row['close']>=position['entry_price']+position['risk_unit']:
@@ -132,7 +156,7 @@ def simulate(bars,cs,events,year,cost_bps=20,exit_mode=EXIT_MODE,*,start=None,en
     if position:
         position={k:v for k,v in position.items() if k!='entry_index'}
         position.update(as_of=last_date,unrealized_net_return=last_close*(1-half)/(position['entry_price']*(1+half))-1)
-    return {'signals':signals,'executions':fills,'trades':trades,'cancelled':cancelled,'position':position,'pending':pending,
+    return {**({'drawdown_guard':guard} if guard is not None else {}),'signals':signals,'executions':fills,'trades':trades,'cancelled':cancelled,'position':position,'pending':pending,
             'equity_curve':curve,'summary':{'closed_trades':len(trades),'positive_trades':sum(t['net_return']>0 for t in trades),
             'win_fraction':sum(t['net_return']>0 for t in trades)/len(trades) if trades else None,
             'model_net_return':curve[-1]['nav']-1 if curve and fills else None,'model_max_drawdown':max_dd if fills else None}}

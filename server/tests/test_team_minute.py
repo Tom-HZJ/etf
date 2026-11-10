@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
-from datetime import timedelta
+from datetime import datetime, timedelta
 from unittest import mock
 
 from etfmon import config, sources, store, team_minute, views
@@ -41,6 +41,8 @@ class _TeamMinuteBase(unittest.TestCase):
     def write_daily(self, shares: dict[str, float], date: str = "2026-11-06") -> None:
         payload = {"days": {date: {code: {"shares": value, "price": 4.0} for code, value in shares.items()}}}
         store.write_json(store.path_for("national", "daily.json"), payload)
+        for market,prefix in (('sse','sh'),('szse','sz')):
+            store.write_json(store.path_for('share_history',market,date+'.json'),dict(date=date,unit='份',source=market+'_settled_etf_shares',rows={c:dict(shares=v) for c,v in shares.items() if c.startswith(prefix)}))
 
 
 class SharesTest(_TeamMinuteBase):
@@ -55,37 +57,73 @@ class SharesTest(_TeamMinuteBase):
             },
         )
         with mock.patch.object(team_minute.config, "TEAM_CODES", ("a", "b", "c")):
-            weights, date = team_minute.latest_shares()
+            weights, date = team_minute.latest_shares(store.load_daily()["days"])
         self.assertEqual(date, "2026-11-06")
         self.assertEqual(weights, {"a": 333.0, "b": 222.0})  # b 回退到最近可用日期
 
 
 class ComposeTest(_TeamMinuteBase):
     def test_formula_and_alignment(self) -> None:
-        windows = ("s1", "s2", "s3")
         results = {
-            "s1": [bar("2026-11-06 09:31", 4.0, 10), bar("2026-11-06 09:32", 4.4, 20)],
-            "s2": [bar("2026-11-06 09:31", 2.0, 30)],
-            "s3": [],
+            "s1": [bar("2026-11-06 09:31", 4, 10), bar("2026-11-06 09:32", 4.4, 20)],
+            "s2": [bar("2026-11-06 09:31", 2, 30)],
         }
-        weights = {"s1": 1e8, "s2": 1e8, "s3": 1e8}
-        with mock.patch.object(team_minute.config, "TEAM_CODES", windows):
-            payload = team_minute.compose(results, weights, 240, errors={"s3": "失败：timeout"})
-        self.assertEqual(payload["method"]["codes"], 3)
-        self.assertEqual(payload["method"]["missing"], ["s3"])
-        self.assertIn("1 只基金缺少分钟数据", payload["warning"])
-        self.assertEqual([point["time"] for point in payload["series"]], ["2026-11-06 09:31", "2026-11-06 09:32"])
-        first = payload["series"][0]
-        # (1e8×4.0 + 1e8×2.0)/1e8 = 6.0 亿元
-        self.assertAlmostEqual(first["value"], 6.0)
-        self.assertAlmostEqual(first["change_pct"], 0.0)
-        self.assertAlmostEqual(first["volume"], 40.0)
-        second = payload["series"][1]
-        # s2 缺 09:32 → 只计 s1：(1e8×4.4)/1e8 = 4.4 亿元
-        self.assertAlmostEqual(second["value"], 4.4)
-        self.assertAlmostEqual(second["change_pct"], round(4.4 / 6.0 - 1, 6))
-        self.assertEqual(payload["as_of"], "2026-11-06 09:32")
-        self.assertEqual(payload["count"], 2)
+        with mock.patch.object(team_minute.config, "TEAM_CODES", ("s1", "s2")):
+            payload = team_minute.compose(results, {"s1": 1e8, "s2": 1e8})
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["as_of"], "2026-11-06 09:31")
+        self.assertEqual(payload["series"][0]["value"], 6)
+        self.assertEqual(payload["series"][0]["volume"], 40)
+        self.assertEqual(payload["series"][0]["members"], 2)
+        self.assertEqual(payload["method"]["latest_coverage"], 1)
+        self.assertEqual(payload["method"]["incomplete"][0]["missing"], ["s2"])
+        self.assertIn("未绘制", payload["warning"])
+        # Once backfilled, the same timestamp becomes a complete comparable point.
+        results["s2"].append(bar("2026-11-06 09:32", 2.1, 5))
+        with mock.patch.object(team_minute.config, "TEAM_CODES", ("s1", "s2")):
+            fixed = team_minute.compose(results, {"s1": 1e8, "s2": 1e8})
+        self.assertEqual(fixed["count"], 2)
+        self.assertEqual(fixed["series"][-1]["value"], 6.5)
+        self.assertIsNone(fixed["warning"])
+
+    def test_missing_whole_member_never_changes_basket(self) -> None:
+        with mock.patch.object(team_minute.config, "TEAM_CODES", ("a", "b")):
+            p = team_minute.compose({"a": [bar("2026-11-06 09:31", 4)]}, {"a": 1e8, "b": 1e8})
+        self.assertEqual(p["series"], [])
+        self.assertEqual(p["method"]["missing"], ["b"])
+
+    def test_bad_prices_weights_and_duplicates(self) -> None:
+        for bad in (0, -1, float("nan"), float("inf"), None):
+            with self.subTest(bad=bad), mock.patch.object(team_minute.config, "TEAM_CODES", ("a", "b")):
+                results = {"a": [bar("2026-11-06 09:31", 4)], "b": [bar("2026-11-06 09:31", bad)]}
+                self.assertEqual(team_minute.compose(results, {"a": 1e8, "b": 1e8})["series"], [])
+                self.assertEqual(team_minute.compose({"a": results["a"], "b": results["a"]}, {"a": 1e8, "b": bad})["series"], [])
+        b = bar("2026-11-06 09:31", 4)
+        with mock.patch.object(team_minute.config, "TEAM_CODES", ("a",)):
+            self.assertEqual(team_minute.compose({"a": [b, b]}, {"a": 1e8})["series"][0]["value"], 4)
+            self.assertEqual(team_minute.compose({"a": [b, bar(b["time"], 5)]}, {"a": 1e8})["series"], [])
+
+    def test_day_baseline_and_interior_gap(self) -> None:
+        bars = [bar("2026-11-05 15:00", 4), bar("2026-11-06 09:31", 8), bar("2026-11-06 09:32", 9), bar("2026-11-06 09:33", 10)]
+        with mock.patch.object(team_minute.config, "TEAM_CODES", ("a", "b")):
+            p = team_minute.compose({"a": bars, "b": bars[:2] + bars[3:]}, {"a": 1e8, "b": 1e8})
+        self.assertEqual([v["change_pct"] for v in p["series"]], [0, 0, .25])
+        self.assertEqual(p["method"]["incomplete"][0]["time"], "2026-11-06 09:32")
+
+    def test_unclosed_source_end_times_not_drawn(self) -> None:
+        bars = [bar("2026-11-06 09:31", 4), bar("2026-11-06 09:32", 5)]
+        with mock.patch.object(team_minute.config, "TEAM_CODES", ("a",)):
+            p = team_minute.compose({"a": bars}, {"a": 1e8}, now=datetime(2026, 11, 6, 9, 31, 50))
+        self.assertEqual(p["as_of"], "2026-11-06 09:31")
+        self.assertEqual(p["method"]["forming"], ["2026-11-06 09:32"])
+        self.assertIn("尚未收盘", p["warning"])
+
+    def test_real_decline_is_not_suppressed(self) -> None:
+        with mock.patch.object(team_minute.config, "TEAM_CODES", ("a", "b")):
+            bars = [bar("2026-11-06 09:31", 4), bar("2026-11-06 09:32", 3)]
+            p = team_minute.compose({"a": bars, "b": bars}, {"a": 1e8, "b": 1e8})
+        self.assertEqual(p["series"][-1]["change_pct"], -.25)
+        self.assertIsNone(p["warning"])
 
     def test_empty_series_warning(self) -> None:
         with mock.patch.object(team_minute.config, "TEAM_CODES", ("s1",)):
@@ -113,12 +151,14 @@ class GetTeamMinuteTest(_TeamMinuteBase):
         self.assertEqual(fetch.call_count, 2)  # 第二次命中缓存（每只 1 次/轮）
         self.assertEqual(first["count"], 2)
         self.assertEqual(first["source"], "eastmoney")
+        self.assertEqual(first["shares_basis"], "exchange-settled-shares-v1")
+        self.assertEqual(first["share_date"], "2026-11-06")
         self.assertIsNone(first["warning"])
         self.assertAlmostEqual(first["series"][0]["value"], round((1e8 * 4.0 + 1e8 * 2.0) / 1e8, 4))
         self.assertTrue(team_minute.cache_path(1).is_file())
         self.assertEqual(second["count"], 2)
 
-    def test_partial_failure_returns_available_series(self) -> None:
+    def test_partial_failure_waits_for_complete_members(self) -> None:
         self.write_daily({"sh510300": 1e8, "sh510500": 1e8})
 
         def fetch(code, interval, limit, **kwargs):  # noqa: ANN001
@@ -129,9 +169,9 @@ class GetTeamMinuteTest(_TeamMinuteBase):
         with mock.patch.object(team_minute.config, "TEAM_CODES", ("sh510300", "sh510500")):
             with mock.patch("etfmon.sources.fetch_minute", side_effect=fetch):
                 payload = team_minute.get_team_minute(1, 240)
-        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["count"], 0)
         self.assertEqual(payload["method"]["missing"], ["sh510500"])
-        self.assertIn("缺少分钟数据", payload["warning"])
+        self.assertIn("缺少有效分钟数据", payload["warning"])
 
     def test_all_fail_returns_empty_with_warning(self) -> None:
         self.write_daily({"sh510300": 1e8})
@@ -154,15 +194,27 @@ class GetTeamMinuteTest(_TeamMinuteBase):
             "interval": 1,
             "fetched_at": "2020-01-01T10:00:00+08:00",
             "source": "eastmoney",
-            "series": [{"time": "2020-01-01 09:31", "date": "2020-01-01", "value": 1.0, "change_pct": 0.0, "volume": 1.0}],
-            "method": {"unit": "亿元", "weighting": "latest shares × minute close", "codes": 1, "missing": []},
+            "series": [{"time": "2020-01-01 09:31", "date": "2020-01-01", "value": 1.0, "change_pct": 0.0, "volume": 1.0, "members": 1}],
+            "method": {"version": team_minute.COMPOSITION_VERSION, "unit": "亿元", "weighting": "latest shares × minute close", "codes": 1, "missing": []},
         }
+        old.update(shares_basis=team_minute.settled_shares.VERSION,share_date='2026-11-06',share_weights={'sh510300':1e8})
         store.write_json(team_minute.cache_path(1), old)
         with mock.patch.object(team_minute.config, "TEAM_CODES", ("sh510300",)):
             with mock.patch("etfmon.sources.fetch_minute", side_effect=sources.SourceError("down")):
                 payload = team_minute.get_team_minute(1, 240)
         self.assertEqual(payload["count"], 1)
         self.assertIn("缓存", payload["warning"])
+
+    def test_legacy_corrupt_cache_never_reused(self) -> None:
+        self.write_daily({"sh510300": 1e8})
+        old = {"fetched_at": store.iso_now(), "series": [{"time": "2026-11-10 09:57", "value": 1}],
+               "method": {"codes": 1, "missing": []}}
+        store.write_json(team_minute.cache_path(1), old)
+        with mock.patch.object(team_minute.config, "TEAM_CODES", ("sh510300",)):
+            self.assertFalse(team_minute.is_fresh(old))
+            self.assertIsNone(team_minute.load_cache(1))
+            with mock.patch("etfmon.sources.fetch_minute", side_effect=sources.SourceError("down")):
+                self.assertEqual(team_minute.get_team_minute(1)["series"], [])
 
     def test_26_codes_concurrent_mock(self) -> None:
         shares = {code: 1e8 for code in config.TEAM_CODES}
@@ -183,13 +235,13 @@ class GetTeamMinuteTest(_TeamMinuteBase):
 
     def test_limit_trims_recent_points(self) -> None:
         self.write_daily({"sh510300": 1e8})
-        many = [bar(f"2026-11-06 09:{minute:02d}", 4.0) for minute in range(1, 11)]
+        many = [bar(f"2026-11-06 09:{minute:02d}", 4.0) for minute in range(31, 41)]
         with mock.patch.object(team_minute.config, "TEAM_CODES", ("sh510300",)):
             with mock.patch("etfmon.sources.fetch_minute", return_value=(many, "eastmoney")):
                 payload = team_minute.get_team_minute(1, 5)
         self.assertEqual(payload["count"], 5)
-        self.assertEqual(payload["series"][0]["time"], "2026-11-06 09:06")
-        self.assertEqual(payload["as_of"], "2026-11-06 09:10")
+        self.assertEqual(payload["series"][0]["time"], "2026-11-06 09:36")
+        self.assertEqual(payload["as_of"], "2026-11-06 09:40")
 
 
 class TeamMinuteViewTest(_TeamMinuteBase):

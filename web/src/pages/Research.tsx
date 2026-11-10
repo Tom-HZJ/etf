@@ -1,334 +1,98 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { RefObject } from "react";
-import { fetchResearch } from "../api/research";
-import type { ResearchRow } from "../api/research";
-import { useResource } from "../lib/hooks";
-import type { ThemeMode } from '../lib/hooks';
-import { ErrorPanel, PanelSkeleton } from "../components/States";
-import { EvaluationPanel } from '../components/EvaluationPanel';
-import {readReplayPreferences,saveReplayPreferences} from '../lib/replayDisplay';
-const EmbeddedMarket = lazy(()=>import('./Market').then(module=>({default:module.MarketPage})));
-const PHASES: Record<string, string> = {
-  preparing:"准备阶段预警",tracking:"结构跟踪",await_setup:"等待新准备结构",history_short:"可用历史较短",invalid_data:"数据异常待补",refreshing_data:"数据更新中",
-  triggered: "首次转强 · 次日观察",
-  await_trigger: "回踩后待确认",
-  await_pullback: "趋势成立 · 等回踩",
-  extended: "偏离过大 · 不追认",
-  no_trend: "趋势尚未成立",
-  separate_rules: "需独立规则",
-  insufficient: "数据不足",
-  stale: "数据待补齐",
-  expired: "本轮触发已过去",
-  risk_wide: "风险距离过宽",
-};
-const FILTERS = [
-  {value:"focus",label:"重点关注",hint:"准备预警、完整确认与结构跟踪；具体阶段见列表和详情。"},
-  {value:"waiting",label:"等待机会",hint:"暂未形成合适结构，继续等待新的准备或确认。"},
-  {value:"paused",label:"暂不参与",hint:"偏离或风险距离过大、旧窗口已过，或需要独立规则。"},
-  {value:"data",label:"数据待补",hint:"数据不足、异常或正在更新，暂不判断观察机会。"},
-  {value:"all",label:"全部",hint:"查看所有代表方向，详细原因保留在每个标的中。"},
-] as const;
-type Filter = typeof FILTERS[number]['value'];
-function groupFor(row:ResearchRow):Filter {
-  if (['insufficient','history_short','invalid_data','stale','refreshing_data'].includes(row.phase)) return 'data';
-  if (['extended','risk_wide','separate_rules','expired'].includes(row.phase)) return 'paused';
-  if (row.eligible || row.prealert || row.phase==='tracking') return 'focus';
-  if (['no_trend','await_setup','await_trigger','await_pullback'].includes(row.phase)) return 'waiting';
-  return 'data';
-}
-const price = (v: number | null | undefined): string =>
-  typeof v === "number" && Number.isFinite(v) ? v.toFixed(3) : "—";
-function Detail({ row,panelRef,onBack,onOpen }: { row: ResearchRow | undefined;panelRef:RefObject<HTMLElement|null>;onBack?:()=>void;onOpen:(row:Pick<ResearchRow,'code'|'name'>,origin:HTMLElement)=>void }): React.JSX.Element {
-  if (!row)
-    return (
-      <aside className="research-detail" id="research-detail-panel" ref={panelRef}>
-        <h2>选择一个方向</h2>
-        <p>查看规则、参考价格与观察失效条件。</p>
-      </aside>
-    );
-  return (
-    <aside className="research-detail" id="research-detail-panel" ref={panelRef} tabIndex={-1} aria-labelledby="research-detail-title" aria-live="polite">
-      <div className="eyebrow">REVIEW · 观察说明</div>
-      <div className="research-detail-head"><h2 id="research-detail-title">{row.name}</h2>{onBack?<button type="button" className="research-detail-button" onClick={onBack}>返回清单</button>:null}</div>
-      <p className="research-reason">{row.reason}</p>
-      <dl>
-        <div>
-          <dt>参考收盘（非成交价）</dt>
-          <dd>{price(row.reference_close)}</dd>
-        </div>
-        <div>
-          <dt>结构失效参考</dt>
-          <dd>{price(row.invalidation_close)}</dd>
-        </div>
-        <div>
-          <dt>首次确认日期</dt>
-          <dd>{row.trigger_date ?? "—"}</dd>
-        </div>
-        <div>
-          <dt>14日平均真实波幅</dt>
-          <dd>{price(row.atr14)}</dd>
-        </div>
-      </dl>
-      <div className="research-paths">{row.paths?.map(path=><p key={path.path}><strong>{path.label}</strong>：{path.eligible?'符合完整研究条件':path.geometry_allowed?'位置条件通过，市场门槛未通过':path.price_event_today?'有价格事件，完整条件未通过':'今日无新触发'}</p>)}</div>
-      <p className="research-provenance">价格事件：{row.price_event_date??'—'}<br/>回算最近完整条件：{row.last_signal_date??'—'}<br/>可用日线：{row.history_bars} 根</p>
-      <h3>如果开始纸面跟踪</h3>
-      <ol>
-        {row.exit_plan.map((text) => (
-          <li key={text}>{text}</li>
-        ))}
-      </ol>
-      <p className="research-provenance">
-        数据：{row.provenance?.source ?? "—"} ·{" "}
-        {row.provenance?.adjustment ?? "—"}
-        <br />
-        采集：{row.provenance?.updated_at ?? "—"}
-        <br />
-        日线：{row.data_date ?? "—"} · 计算门槛：当日15:10后
-      </p>
-      <button type="button" className="research-link" onClick={event=>onOpen(row,event.currentTarget)}>
-        本页查看行情与 K 线
-      </button>
-    </aside>
-  );
-}
-export function ResearchPage({
-  refreshTick,
-  mode,
-}: {
-  refreshTick: number;
-  mode:ThemeMode;
-}): React.JSX.Element {
-  const [researchModel,setResearchModel]=useState<'current'|'expanded'>(()=>{try{return readReplayPreferences(window.localStorage).model==='expanded'?'expanded':'current';}catch{return 'current';}});
-  const resource = useResource(signal=>fetchResearch(signal,researchModel), [refreshTick,researchModel], {
-    pollMs: 60_000,
-  });
-  const [query, setQuery] = useState(""),
-    [filter, setFilter] = useState<Filter>("focus"),
-    [selected, setSelected] = useState<string | null>(null);
-  const [selectionRequest,setSelectionRequest]=useState(0);
-  const detailRef=useRef<HTMLElement>(null),lastExplainButton=useRef<HTMLButtonElement|null>(null);
-  const [openedAsset,setOpenedAsset]=useState<Pick<ResearchRow,'code'|'name'>|null>(null);
-  const tableRef=useRef<HTMLDivElement>(null),backRef=useRef<HTMLButtonElement>(null);
-  const returnPosition=useRef({pageY:0,tableTop:0,tableLeft:0,origin:null as HTMLElement|null});
-  const restoringList=useRef(false);
-  function openAsset(row:Pick<ResearchRow,'code'|'name'>,origin:HTMLElement){
-    returnPosition.current={pageY:window.scrollY,tableTop:tableRef.current?.scrollTop??0,tableLeft:tableRef.current?.scrollLeft??0,origin};
-    setSelected(row.code);setOpenedAsset(row);
-  }
-  useLayoutEffect(()=>{
-    if(openedAsset){window.scrollTo({top:0,behavior:'instant'});backRef.current?.focus({preventScroll:true});}
-    else if(restoringList.current){
-      restoringList.current=false;
-      const saved=returnPosition.current;
-      tableRef.current?.scrollTo({top:saved.tableTop,left:saved.tableLeft,behavior:'instant'});
-      window.scrollTo({top:saved.pageY,behavior:'instant'});
-      if(saved.origin?.isConnected)saved.origin.focus({preventScroll:true});
-    }
-  },[openedAsset]);
-  function resetDetail(){setSelected(null);setSelectionRequest(0);lastExplainButton.current=null;}
-  useEffect(()=>{
-    if(!selectionRequest)return;
-    const panel=detailRef.current;
-    if(!panel)return;
-    if(window.matchMedia('(max-width:1000px)').matches)panel.scrollIntoView({block:'start',behavior:'auto'});
-    panel.focus({preventScroll:true});
-  },[selectionRequest]);
-  const data = resource.data?.model===researchModel?resource.data:null;
-  function chooseModel(value:'current'|'expanded'){
-    setResearchModel(value);
-    try{saveReplayPreferences(window.localStorage,{...readReplayPreferences(window.localStorage),model:value,path:'combined'});}catch{/* Browser storage is optional. */}
-  }
-  const rows =
-    data?.rows.filter(
-      (row) =>
-        (filter==='all' || groupFor(row)===filter) &&
-        `${row.name} ${row.code} ${row.direction}`
-          .toLowerCase()
-          .includes(query.trim().toLowerCase()),
-    ) ?? [];
-  const detail = rows.find((row) => row.code === selected) ?? rows[0];
-  return (
-    <>
-    <div className="research-page" hidden={openedAsset!==null}>
-      <div id="research-app">
-        <header className="research-head">
-          <div className="eyebrow">SWING RESEARCH · 数天至数周</div>
-          <h1>先看转强，再看位置。</h1>
-          <p>
-            提前观察5/10日线变化，交叉确认仍须核对自身位置与风险；旧结构失效后重新开始观察。
-          </p>
-          <label>研究模型 <select className="fund-select" value={researchModel} onChange={event=>chooseModel(event.target.value as 'current'|'expanded')}><option value="expanded">扩展机会 v5 · 风险较高</option><option value="current">较严入场 v4 对照</option></select></label>
-          {researchModel==='expanded'?<p className="text-[var(--etf-amber)]">交叉后5日内继续等待确认，位置上限2ATR、结构风险上限3ATR。机会更多，但已观察历史中的亏损、回撤与回吐均高于v4；由你决定是否交易。</p>:null}
-          {data ? (
-            <div id="research-status" role="status">
-              日线截至 {data.as_of ?? "—"} ·{" "}
-              {data.data_stale
-                ? "数据待补齐，已暂停候选判断"
-                : "历史数据重算 · 研究假设"}{" "}
-              · {data.sources.join(" / ") || "—"} · 最近采集{" "}
-              {data.latest_collected_at ?? "—"} · {data.model_label}{data.stale_count ? ` · ${data.stale_count}只自身数据待更新` : ""}
-            </div>
-          ) : null}
-        </header>
-        {resource.status === "error" ? (
-          <ErrorPanel
-            error={resource.error}
-            onRetry={resource.reload}
-            title="研究数据不可用，已暂停观察判断"
-          />
-        ) : !data ? (
-          <PanelSkeleton rows={4} />
-        ) : (
-          <>
-            <section className="research-summary" aria-label="日线研究概览">
-              {[
-                [
-                  "判断范围",
-                  "ETF自身",
-                  "不设沪深300或其他宽基门槛",
-                ],
-                [
-                  "短期转强方向",
-                  data.rows.filter((r) => r.trend_confirmed).length,
-                  "MA5 > MA10，MA10向上，收盘在MA10上",
-                ],
-                [
-                  "准备阶段预警",
-                  data.prealert_count,
-                  "仅供提前观察，不是买入指令",
-                ],
-                [
-                  "新观察窗口",
-                  data.candidate_count,
-                  "完整日线确认，下一交易日观察",
-                ],
-              ].map(([label, value, hint]) => (
-                <article className="research-stat" key={label}>
-                  <span>{label}</span>
-                  <strong>{value}</strong>
-                  <small>{hint}</small>
-                </article>
-              ))}
-            </section>
-            <div className="research-warning">
-              研究假设 ·
-              尚未通过样本外收益验证。参考收盘不是成交价；实际开盘、滑点、费用、T+1和跳空风险需另行记录。
-            </div>
-            <div className="research-workspace">
-              <section className="research-list">
-                <div className="research-tools">
-                  <div>
-                    <h2>方向观察清单</h2>
-                    <span>
-                      显示 {rows.length} / {data.rows.length} 个代表方向
-                    </span>
-                  </div>
-                  <input
-                    aria-label="搜索名称或代码"
-                    placeholder="搜索名称 / 代码"
-                    value={query}
-                    onChange={(e) => {setQuery(e.target.value);resetDetail();}}
-                  />
-                  <select
-                    aria-label="筛选观察分类"
-                    aria-describedby="research-filter-hint"
-                    value={filter}
-                    onChange={(e) => {setFilter(e.target.value as Filter);resetDetail();}}
-                  >
-                    {FILTERS.map(({value,label}) => (
-                      <option value={value} key={value}>
-                        {label} · {value==='all'?data.rows.length:data.rows.filter(row=>groupFor(row)===value).length}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <p className="research-filter-hint" id="research-filter-hint">
-                  {FILTERS.find(item=>item.value===filter)?.hint}
-                </p>
-                <div className="research-table-wrap" ref={tableRef}>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>代表 ETF / 日线日期 · 点名称在本页查看</th>
-                        <th>当前阶段</th>
-                        <th>参考收盘</th>
-                        <th>距 MA10</th>
-                        <th>参考风险距离</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((row) => (
-                        <tr
-                          key={row.code}
-                          aria-selected={row.code === detail?.code}
-                        >
-                          <td>
-                            <div className="research-asset-actions"><button type="button" className="research-name" aria-label={`本页查看${row.name}行情与持仓`} onClick={event=>openAsset(row,event.currentTarget)}>
-                              <strong>{row.name}</strong>
-                              <small>
-                                {row.code} · {row.data_date ?? "—"}
-                              </small>
-                            </button>
-                            <button type="button" className="research-detail-button" aria-label={`查看${row.name}研究说明`} aria-controls="research-detail-panel" onClick={event=>{lastExplainButton.current=event.currentTarget;setSelected(row.code);setSelectionRequest(value=>value+1);}}>研究说明</button></div>
-                          </td>
-                          <td>
-                            <span
-                              className={`research-phase ${row.eligible ? "research-phase--active" : ""}`}
-                            >
-                              {PHASES[row.phase] ?? row.phase}
-                            </span>
-                          </td>
-                          <td className="research-num">
-                            {price(row.reference_close)}
-                          </td>
-                          <td className="research-num">
-                            {row.entry_distance_atr !== null
-                              ? `${row.entry_distance_atr.toFixed(2)} ATR`
-                              : "—"}
-                          </td>
-                          <td className="research-num">
-                            {row.risk_distance_pct !== null
-                              ? `${(row.risk_distance_pct * 100).toFixed(2)}%`
-                              : "—"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {rows.length === 0 ? (
-                  <div className="research-empty">
-                    <p>{query.trim()?'未找到符合搜索条件的方向。':filter==='focus'?'目前没有重点关注项，可先查看其他方向。':'这一分类目前没有标的。'}</p>
-                    {filter!=='all'||query.trim()?<button type="button" className="research-link" onClick={()=>{setFilter('all');setQuery('');resetDetail();}}>查看全部方向</button>:null}
-                  </div>
-                ) : null}
-              </section>
-              <Detail row={detail} panelRef={detailRef} onOpen={openAsset} onBack={selectionRequest?()=>{const button=lastExplainButton.current;if(button?.isConnected){button.scrollIntoView({block:'center',behavior:'auto'});button.focus({preventScroll:true});}}:undefined}/>
-            </div>
-          </>
-        )}
-        {researchModel==='current'?<EvaluationPanel refreshTick={refreshTick}/>:null}
-        <details className="research-method">
-          <summary>规则与数据口径</summary>
-          <p>
-            每只ETF独立判断：v4须在MA5首次上穿MA10当天通过条件；扩展v5保留含当天共5个交易日的确认窗口。两者均要求确认时MA10向上、收盘在MA10之上；MA30仅作背景。v4距MA10最多1.5ATR、初始风险最多2ATR；扩展v5分别放宽为2ATR和3ATR，下一交易日开盘仍重查。结构失效或窗口到期即重置，同一窗口不重复确认。卖出保持1R后利润保护、1.5R阶段目标、两日低于MA10、5日无延续或10日复核。只使用15:10后完整日线，不设任何宽基门槛。历史已用于研究，更多信号不等于更高收益。
-          </p>
-          <p>
-            跨境与商品ETF分开处理。当前页面是按现有历史数据重算；部署后的日终采集追加带真实记录时间的观察档案，不补造历史“当时已知”信号。不接交易账户、不自动下单。不使用最新份额反推的国家队合成K线来评估入场。尚无独立交易所假日日历，需核对该ETF自身最新完整交易日。
-          </p>
-          <p>
-            后台报价约20秒轮询，分钟接口缓存约60秒；这不等于数据源具有同等实时性保障。更新时间以页面真实来源日期和时间为准。
-          </p>
-        </details>
-      </div>
-    </div>
-    {openedAsset?<section className="research-asset-view" aria-labelledby="research-asset-title">
-      <header className="research-asset-view-head">
-        <button ref={backRef} type="button" className="asset-back" onClick={()=>{try{setResearchModel(readReplayPreferences(window.localStorage).model==='expanded'?'expanded':'current');}catch{/* Keep current selection. */}restoringList.current=true;setOpenedAsset(null);}}>← 返回观察清单</button>
-        <div><h1 id="research-asset-title">{openedAsset.name} · 行情与持仓</h1><p>{openedAsset.code} · 当前研究页内查看</p></div>
-      </header>
-      <Suspense fallback={<PanelSkeleton rows={3} chart/>}><EmbeddedMarket key={openedAsset.code} mode={mode} refreshTick={refreshTick} initialCode={openedAsset.code} embedded/></Suspense>
-    </section>:null}
-    </>
-  );
+import { CACHED_QUOTE_REFRESH_MS } from '../lib/refreshPolicy';
+import {lazy,Suspense,useEffect,useLayoutEffect,useRef,useState} from 'react';
+import {fetchActions} from '../api/actions';
+import type {ActionRow,BuyPoint} from '../api/actions';
+import {useResource} from '../lib/hooks';
+import type {ThemeMode} from '../lib/hooks';
+import {ErrorPanel,PanelSkeleton} from '../components/States';
+import {ACTIVE_PROFILE} from '../lib/activePolicy';
+import {activeActions,clock,quoteClock,confirmationLabel,emptyMessage} from '../lib/actionDisplay';
+import {newBuyPoints,recordedBuyPoints,pointKey,readBuyDismissals,saveBuyDismissals} from '../lib/buyPoints';
+import {SellPoints,PaperTrades} from '../components/SellPoints';
+import {recordedSellPoints,sellPointLabel} from '../lib/sellPoints';
+const EmbeddedMarket=lazy(()=>import('./Market').then(m=>({default:m.MarketPage})));
+const price=(v:number|null|undefined)=>typeof v==='number'&&Number.isFinite(v)?v.toFixed(3):'—';
+const FILTERS=[['focus','重点关注'],['holding','模拟持有'],['waiting','等待买点'],['data','数据待更新'],['all','全部']] as const;
+type Filter=typeof FILTERS[number][0];
+function noticeStorage():Storage|undefined{try{return window.localStorage;}catch{return undefined;}}
+
+export function ResearchPage({refreshTick,mode}:{refreshTick:number;mode:ThemeMode}):React.JSX.Element{
+ const model=ACTIVE_PROFILE.model,protection=ACTIVE_PROFILE.protection;
+ const resource=useResource(signal=>fetchActions(signal,model,protection),[refreshTick,model,protection],{pollMs:CACHED_QUOTE_REFRESH_MS});
+ const data=resource.data?.model===model&&resource.data.protection===protection?resource.data:null;
+ const [now,setNow]=useState(Date.now());
+ useEffect(()=>{const id=window.setInterval(()=>setNow(Date.now()),5000);return()=>window.clearInterval(id);},[]);
+ const [query,setQuery]=useState(''),[filter,setFilter]=useState<Filter>('focus');
+ const [dismissed,setDismissed]=useState(()=>readBuyDismissals(noticeStorage()));
+ const [opened,setOpened]=useState<(Pick<ActionRow,'code'|'name'>&{minute:boolean})|null>(null);
+ const tableRef=useRef<HTMLDivElement>(null),backRef=useRef<HTMLButtonElement>(null),recordsRef=useRef<HTMLElement>(null),restoring=useRef(false);
+ const origin=useRef<{element:HTMLElement|null;pageY:number;tableTop:number;tableLeft:number}>({element:null,pageY:0,tableTop:0,tableLeft:0});
+ function open(row:Pick<ActionRow,'code'|'name'>,element:HTMLElement,minute=false){
+  origin.current={element,pageY:window.scrollY,tableTop:tableRef.current?.scrollTop??0,tableLeft:tableRef.current?.scrollLeft??0};setOpened({...row,minute});
+ }
+ useLayoutEffect(()=>{
+  if(opened){window.scrollTo({top:0,behavior:'instant'});backRef.current?.focus({preventScroll:true});}
+  else if(restoring.current){restoring.current=false;const p=origin.current;tableRef.current?.scrollTo({top:p.tableTop,left:p.tableLeft,behavior:'instant'});window.scrollTo({top:p.pageY,behavior:'instant'});(p.element?.isConnected?p.element:recordsRef.current)?.focus({preventScroll:true});}
+ },[opened]);
+ const active=activeActions(data,now),activeIds=new Set(active.map(r=>r.event_id));
+ const current=(r:ActionRow)=>Boolean(r.event_id&&activeIds.has(r.event_id));
+ const buys=recordedBuyPoints(data),fresh=newBuyPoints(data,dismissed,active,now);
+ const byCode=new Map(buys.map(p=>[p.code,p]));
+ const allRows=data?.rows??[];
+ function matches(row:ActionRow,value:Filter):boolean{
+  if(value==='all')return true;
+  if(value==='focus')return current(row)||row.simulated_position;
+  if(value==='holding')return row.simulated_position;
+  if(value==='data')return row.kind==='stale';
+  return !row.simulated_position&&!current(row)&&row.kind!=='stale';
+ }
+ const rows=allRows.filter(r=>matches(r,filter)&&`${r.name} ${r.code} ${r.direction}`.toLowerCase().includes(query.trim().toLowerCase()));
+ function dismiss(points:BuyPoint[]){if(!data)return;setDismissed(old=>{const next=new Set(old);points.forEach(p=>next.add(pointKey(data,p)));saveBuyDismissals(noticeStorage(),next);return next;});}
+ const [announcement,setAnnouncement]=useState('');const announced=useRef(new Set<string>());
+ const freshIdentity=data?fresh.map(p=>pointKey(data,p)).join('|'):'';
+ const recentSells=recordedSellPoints(data,now).filter(p=>now-Date.parse(p.observed_at)<180_000);
+ const sellIdentity=recentSells.map(p=>p.event_id).join('|');
+ useEffect(()=>{
+  if(!data)return;
+  const added=fresh.filter(p=>!announced.current.has(pointKey(data,p)));
+  for(const p of added)announced.current.add(pointKey(data,p));
+  const exits=recentSells.filter(p=>!announced.current.has(p.event_id));
+  for(const p of exits)announced.current.add(p.event_id);
+  const messages=[];
+  if(added.length)messages.push(`新算法买点：${added.slice(0,2).map(p=>`${p.name} ${clock(p.observed_at)} 参考价${price(p.reference_price)}`).join('，')}${added.length>2?`等${added.length}只ETF`:''}`);
+  if(exits.length)messages.push(`今日卖点：${exits.slice(0,2).map(p=>`${p.name} ${sellPointLabel(p)} ${clock(p.observed_at)} 参考价${price(p.reference_price)}`).join('，')}`);
+  if(messages.length)setAnnouncement(messages.join('。'));
+ },[freshIdentity,sellIdentity]);
+ const sessionLabels:Record<string,string>={pre:'盘前',morning:'交易中',lunch:'午间休市',afternoon:'交易中',post:'盘后',weekend:'休市'};
+ function notice(point:BuyPoint){return <div className="buy-notice" key={point.event_id}>
+  <time>{clock(point.observed_at)}</time><span className="buy-notice-name"><strong>{point.name}</strong><small>{point.code} · 算法买点（盘中）</small></span>
+  <span className="buy-notice-price"><small>触发参考价</small><b>{price(point.reference_price)}</b></span>
+  <button type="button" className="research-link" onClick={e=>{dismiss([point]);open(point,e.currentTarget,true);}}>看分时买点 →</button>
+  <button type="button" className="buy-notice-dismiss" onClick={()=>dismiss([point])} aria-label={`${point.name}买点已看`}>已看</button>
+ </div>;}
+ return <>
+  <section className="research-page action-desk" hidden={opened!==null}>
+   <header className="action-desk-head"><div><span className="eyebrow">BUY POINTS</span><h1>买卖提醒</h1><p>盘中买点 · 模拟持仓卖出与止损</p></div><div className="action-clock"><span>{sessionLabels[data?.session??'']??'检查行情中'}</span><small>更新 {clock(data?.generated_at)}</small></div></header>
+   <p className="sr-only" role="status" aria-atomic="true">{announcement}</p>
+   {resource.status==='error'?<ErrorPanel error={resource.error} onRetry={resource.reload} title="提醒暂不可用，等待重试"/>:!data?<PanelSkeleton rows={3}/>:<>
+    <section className="action-priority" aria-labelledby="today-actions-title">
+     <div className="action-section-title"><h2 id="today-actions-title">新买点提醒</h2><span>{fresh.length?`${fresh.length}只ETF新触发`:'等待新买点'}</span>{fresh.length?<button type="button" className="research-link buy-dismiss-all" onClick={()=>dismiss(fresh)}>全部已看</button>:null}</div>
+     {fresh.length?<div className="buy-notice-list">{fresh.slice(0,3).map(notice)}{fresh.length>3?<details className="buy-more"><summary>其余 {fresh.length-3} 个新买点</summary>{fresh.slice(3).map(notice)}</details>:null}</div>:<div className="buy-quiet"><strong>{data.data_stale||data.rows.every(r=>r.kind==='stale')?emptyMessage(data):(data.session==='morning'||data.session==='afternoon')?'当前没有新的买点提醒':emptyMessage(data)}</strong></div>}
+    </section>
+    <SellPoints data={data} active={active} now={now} onOpen={(p,e)=>open(p,e,true)}/>
+    <details className="buy-records"><summary ref={recordsRef}>今日买点记录 <span>{buys.length}只ETF · 点击展开</span></summary>
+     <div className="buy-record-list">{buys.length?buys.map(p=><button type="button" key={p.event_id} onClick={e=>{dismiss([p]);open(p,e.currentTarget,true);}}><time>{clock(p.observed_at)}</time><strong>{p.name}<small>{p.code}</small></strong><span>参考价 {price(p.reference_price)}</span><small>{data.paper_ledger?.trades.some(t=>t.buy_event_id===p.event_id)?'已模拟买入':active.some(r=>r.kind==='buy'&&r.code===p.code)?'当前仍符合':'已记录 · 当前未满足'}</small><span>看分时 →</span></button>):<p>今天尚未记录算法买点。</p>}</div>
+    </details>
+    <PaperTrades data={data}/>
+    <details className="buy-records"><summary>ETF清单 <span>{allRows.length}只持续监测 · 点击展开</span></summary>
+    <section className="research-list action-watchlist" aria-labelledby="watchlist-title">
+     <div className="research-tools"><div><h2 id="watchlist-title">关注清单</h2><span>{rows.length} / {allRows.length} 只</span></div><input aria-label="搜索ETF名称或代码" placeholder="搜索名称 / 代码" value={query} onChange={e=>setQuery(e.target.value)}/><select aria-label="筛选提醒分类" value={filter} onChange={e=>setFilter(e.target.value as Filter)}>{FILTERS.map(([value,label])=><option value={value} key={value}>{label} · {allRows.filter(r=>matches(r,value)).length}</option>)}</select></div>
+     <div className="research-table-wrap" ref={tableRef}><table><thead><tr><th>ETF · 本页查看</th><th>当前状态</th><th>最新价</th><th>入场观察区间 / 退出参考</th><th>止损参考</th></tr></thead><tbody>{rows.map(row=><tr key={row.code} className={current(row)&&row.kind!=='buy'?`action-row--${row.kind}`:''}><td><button className="research-name" type="button" onClick={e=>open(row,e.currentTarget)}><strong>{row.name}</strong><small>{row.code} · 报价 {quoteClock(row.quote_time,data.date)}</small></button></td><td><span className="action-state">{row.kind==='buy'&&byCode.has(row.code)?'今日买点已记录':row.actionable&&!current(row)?'提醒已过期':row.label}</span>{byCode.has(row.code)&&!row.simulated_position?<small className="action-row-time">{clock(byCode.get(row.code)!.observed_at)} · {price(byCode.get(row.code)!.reference_price)}</small>:current(row)?<small className="action-row-time">{clock(row.trigger_time)} · {confirmationLabel(row)}</small>:null}</td><td className="research-num">{price(row.price)}</td><td className="research-num">{row.simulated_position?(row.sell_price?price(row.sell_price):'按退出条件复核'):`${price(row.entry_low)}—${price(row.entry_high)}`}</td><td className="research-num">{price(row.stop_price)}</td></tr>)}</tbody></table></div>
+     {!rows.length?<div className="research-empty"><p>当前分类没有匹配的ETF。</p><button className="research-link" onClick={()=>{setFilter('all');setQuery('');}}>查看全部</button></div>:null}
+    </section></details>
+
+   </>}
+  </section>
+  {opened?<section className="research-asset-view" aria-labelledby="research-asset-title"><header className="research-asset-view-head"><button ref={backRef} className="asset-back" type="button" onClick={()=>{restoring.current=true;setOpened(null);}}>← 返回提醒</button><div><h1 id="research-asset-title">{opened.name}</h1><p>{opened.code} · 行情与模拟进出条件</p></div></header><Suspense fallback={<PanelSkeleton rows={3} chart/>}><EmbeddedMarket key={opened.code} mode={mode} refreshTick={refreshTick} initialCode={opened.code} initialPeriod={opened.minute?'1m':'day'} embedded/></Suspense></section>:null}
+ </>;
 }

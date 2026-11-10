@@ -220,7 +220,11 @@ def dispatch_get(app: views.App, path: str, query: Mapping[str, list[str]]) -> d
         return views.build_hotspots(app)
     if path == "/api/research":
         from . import research
-        try:return research.build_payload(model=_first(query,'model') or 'current')
+        try:return research.build_payload(model=_first(query,'model') or 'current',protection=_first(query,'protection') or 'none')
+        except ValueError as exc:raise ApiError(400,'bad_request',str(exc)) from exc
+    if path == "/api/research/actions":
+        from . import actions
+        try:return actions.build_payload(model=_first(query,'model') or 'current',protection=_first(query,'protection') or 'none')
         except ValueError as exc:raise ApiError(400,'bad_request',str(exc)) from exc
     if path == "/api/research/replay":
         from . import replay
@@ -229,7 +233,7 @@ def dispatch_get(app: views.App, path: str, query: Mapping[str, list[str]]) -> d
         cutoff = _first(query, 'cutoff') or None
         try:
             cost = int(_first(query, 'cost_bps') or '20')
-            return replay.build_payload(code,strategy,cutoff,cost,model=_first(query,'model') or 'current')
+            return replay.build_payload(code,strategy,cutoff,cost,model=_first(query,'model') or 'current',protection=_first(query,'protection') or 'none')
         except ValueError as exc:
             raise ApiError(400,'bad_request',str(exc)) from exc
     if path == "/api/research/universe":

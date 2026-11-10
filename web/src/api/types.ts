@@ -103,6 +103,14 @@ export interface Trend {
 }
 
 export interface TeamRow {
+  quote_amount?: number | null; // 当日累计二级市场成交额，元
+  quote_volume?: number | null; // 当日累计成交量，手
+  turnover?: number | null; // 来源换手率，小数，非净申赎
+  shares_date?: string | null;
+  previous_shares_date?: string | null;
+  shares_source?: string | null;
+  shares_status?: string;
+  quote_time?: string | null;
   code: string;
   name: string;
   group: string;
@@ -117,12 +125,25 @@ export interface TeamRow {
 }
 
 export interface LiveFlow {
+  date_evidence?: LegacyDateEvidence;
+  basis?: 'legacy_snapshot_difference';
+  members?: number;
+  quote_time?: string;
+  shares_date_verified?: false;
+  is_confirmed_current_day_flow?: false;
   date: string;
   previous_day: string;
   amount: number; // 元
   share_delta: number; // 份
   partial: boolean;
   time: string | null;
+}
+
+export interface LegacyDateEvidence {
+  quote_shares: {actual_date: null; status: string; matching_cleared_dates: string[]};
+  baseline_shares: {actual_date: null; status: string; snapshot_label: string; matching_cleared_dates: string[]};
+  reference_range: {from:string;to:string;verified:false;basis:'value_match_only'} | null;
+  valuation_date: string; snapshot_label_mismatch: boolean; is_current_day_subscription_flow: false;
 }
 
 export interface TeamDay {
@@ -146,6 +167,8 @@ export interface ChartSpan {
 }
 
 export interface TeamResponse {
+  shares_quality?: { verified: number; total: number; latest_complete: string | null; expected: string; source: string; current_day_published: boolean };
+  flow_status?: string;
   generated_at: string;
   as_of: string;
   trade_date: string;
@@ -280,6 +303,7 @@ export interface OverviewResponse {
   is_trading: boolean;
   indices: Quote[];
   national: {
+    snapshot_estimate?: LiveFlow | null;
     today_flow: number | null;
     today_flow_partial: boolean;
     flow_date: string | null;
@@ -454,16 +478,25 @@ export interface TeamMinutePoint {
   value: number;
   change_pct: number | null;
   volume: number | null;
+  members?: number;
 }
 
 export interface TeamMinuteResponse {
+  shares_basis?: string | null;
+  share_date?: string | null;
   generated_at: string;
   interval: MinuteInterval;
   count: number;
   as_of: string | null;
   source: string;
   warning: string | null;
-  method: { unit: string; weighting: string; codes: number; missing: string[] };
+  method: {
+    unit: string; weighting: string; codes: number; missing: string[];
+    version?: string; alignment?: string; baseline?: string;
+    latest_observed_at?: string | null; latest_coverage?: number;
+    omitted_count?: number;
+    incomplete?: { time: string; present: number; missing: string[] }[];
+  };
   series: TeamMinutePoint[];
 }
 
