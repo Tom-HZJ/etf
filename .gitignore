@@ -31,3 +31,9 @@ web/screenshots/
 .DS_Store
 Thumbs.db
 .alma-snapshots
+
+# 本地专用的数据采集脚本与行情落盘位置。
+# 上游接口的限流绕过方式不适合公开分发，因此只留在本机。
+scripts/fetch_us_daily.py
+scripts/normalize_us_daily.py
+data/us_daily/
