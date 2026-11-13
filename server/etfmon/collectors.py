@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any, Iterable, Mapping, Sequence
 
-from . import analytics, config, minute, observability, sources, store, team_minute, views
+from . import analytics, config, minute, observability, sources, store, team_minute, views, turnover
 
 LOG = logging.getLogger("etfmon.collectors")
 
@@ -274,6 +274,8 @@ def refresh_intraday_cache(codes: Iterable[str], *, workers: int = 4) -> dict[st
         payload = sources.fetch_intraday(code)
         payload["updated_at"] = store.iso_now()
         store.write_json(store.path_for("intraday", f"{code}.json"), payload, compact=True)
+        with _DATA_LOCK:
+            turnover.archive_intraday(payload, store.now())
         return {"code": code, "days": len(payload.get("days") or [])}
 
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
@@ -763,6 +765,8 @@ class Collector:
         while not self._stop.is_set():
             try:
                 refresh_quotes(self.cache)
+                with _DATA_LOCK:
+                    turnover.sample_quotes(self.cache.snapshot()[0], store.now())
             except (sources.SourceError, OSError, ValueError) as exc:
                 LOG.warning("报价刷新失败：%s", exc)
                 store.append_task("refresh_quotes", ok=False, detail=str(exc))
@@ -832,10 +836,25 @@ class Collector:
             self._stop.wait(15)
 
     def _intraday_cache_loop(self) -> None:
+        # Preserve existing complete cached sessions before a rolling 5-day feed
+        # drops them; this local recovery does not contact the provider.
+        for code in config.TEAM_CODES:
+            try:
+                with _DATA_LOCK:
+                    turnover.archive_intraday(store.read_json(store.path_for("intraday", f"{code}.json"), {}), store.now())
+            except (OSError, ValueError) as exc:
+                LOG.warning("成交分时缓存恢复失败 %s：%s", code, exc)
+        closing_done: set[str] = set()
         while not self._stop.is_set():
             try:
-                if store.is_trading_time() or not self._intraday_cache_fresh():
-                    refresh_intraday_cache(quote_codes())
+                moment = store.now()
+                clock = moment.hour * 60 + moment.minute
+                closing = "am" if 691 <= clock <= 700 else "pm" if 901 <= clock <= 910 else None
+                close_key = f"{moment.date().isoformat()}-{closing}" if closing and moment.weekday() < 5 else None
+                if store.is_trading_time(moment) or (close_key and close_key not in closing_done) or not self._intraday_cache_fresh():
+                    summary = refresh_intraday_cache(quote_codes())
+                    if close_key and not summary["errors"]:
+                        closing_done.add(close_key)
             except (sources.SourceError, OSError, ValueError) as exc:
                 LOG.warning("分时缓存刷新失败：%s", exc)
             self._stop.wait(300)

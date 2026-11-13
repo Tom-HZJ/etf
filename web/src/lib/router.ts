@@ -1,7 +1,7 @@
 // Tiny hash router: no dependency, deep-linkable, browser back/forward works.
 import { useEffect, useState } from 'react';
 
-export type RouteKey = 'overview' | 'team' | 'hotspots' | 'market' | 'data' | 'research';
+export type RouteKey = 'overview' | 'team' | 'hotspots' | 'market' | 'data' | 'research' | 'stocks' | 'funds';
 
 export interface RouteMeta {
   key: RouteKey;
@@ -10,6 +10,7 @@ export interface RouteMeta {
   en: string;
   index: string;
   summary: string;
+  private?: boolean;
 }
 
 export const ROUTES: RouteMeta[] = [
@@ -54,6 +55,8 @@ export const ROUTES: RouteMeta[] = [
     index: '06',
     summary: '数据源健康、实体清单、口径字典与版本信息。',
   },
+  { key: 'stocks', path: '/stocks', label: '股票研究', en: 'STOCK RESEARCH', index: '07', summary: '已完成日线与独立预测试验。', private: true },
+  { key: 'funds', path: '/funds', label: '我的基金', en: 'MY FUNDS', index: '08', summary: '持仓快照与场外申赎试算。', private: true },
 ];
 
 export const DEFAULT_ROUTE: RouteKey = 'overview';

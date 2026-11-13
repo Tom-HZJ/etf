@@ -1,5 +1,49 @@
 # Source API overview
 
+## Homepage market activity — v2.26.1
+
+`GET /api/overview` adds `market_activity`, read from the existing quote and intraday caches.
+`quote_amount` and `quote_afternoon_amount` use two complete valid index quotes (CNY),
+with `quote_time` and independent expiry. `amount`, `previous_amount`, `delta`, `delta_pct`
+and the Shanghai/Shenzhen rows compare the same completed minute at `as_of` with
+`previous_date`, the preceding local trading-calendar session. Missing history cannot
+be replaced by an older session; missing one market cannot produce a partial total.
+The scope excludes Beijing. Zero remains distinct from missing.
+
+`directions` ranks domestic equity-theme representative ETFs by their CNY turnover increase
+at that exact minute, separately for rising/falling prices. It reports comparable coverage;
+the overlapping proxies are not a decomposition of market turnover, sector-wide totals,
+net flows or investor identity. Overseas/gold proxies are outside this A-share observation.
+The legacy national snapshot estimate and all trading rules remain separate.
+
+Quote polling stays 20 seconds; intraday polling stays five minutes, with one existing-worker
+refresh after each session close to retain the final minute. GET never samples or fetches.
+Server/client freshness and fetch-error guards remove current emphasis independently for
+quotes and minute comparisons. The former homepage brief is replaced by this measurement
+panel; the API `brief` describes these observations without a bullish/bearish turnover gate.
+When paired live quotes are unavailable but a complete fresh minute is present, the
+homepage displays that actual minute total and its timestamp. Missing or expired values
+never become zero; a true zero quote takes precedence over a minute fallback.
+
+## Explicit simulation removals — v2.24.0
+
+军工512660 and 国防军工512810 join the user trading exclusions. User-selected simulated trades can be removed by their original buy event identity. A transaction archives the original row in `removed_trades` before removing it from `trades`. Replaying that discovery or a same-code, same-day rearm cannot recreate the removed position. Normal review and current holding counts use the remaining trades.
+
+## Exit records and open-position valuation — v2.23.0
+
+The action desk shows a separate collapsed 今日卖点记录 using the existing immutable exit discoveries. Clearing a current condition does not erase a recorded reference. 钢铁515210 and configured construction-theme funds join the existing user trading exclusions.
+
+The paper-trade review adds `mark_price`, `mark_time`, `mark_stale`, `floating_pnl` and `floating_return` for open positions. Valuation uses cached valid source quotes and the original stored quantity. Missing, stale or future quotes leave the amounts null. Reads do not create or close trades. Closed trades continue to use their recorded exit references.
+
+## Private workspace preview
+
+- `GET /api/private/funds` reads the local holding snapshot from `ETF_DATA/private/tom/funds.json`. `snapshot_date` may be null. Screenshot amounts and reported gains are separate from confirmed units, NAV and dates entered for the browser's scenario calculation.
+- `GET /api/private/stock?code=sh600000` returns the last 20 completed daily bars and, when available, a matching front-adjusted Kronos forecast. The response records the last source date and adjustment basis. An ad hoc forecast is shown while its first target session is still incomplete. Tracked issues remain visible for comparison.
+- Both routes require the authenticated `tom` identity and send `Cache-Control: no-store`. `test` retains existing ETF reads and cannot modify the watchlist or revoke sessions. Keep private data out of frontend assets, public static roots and repository history.
+- `scripts/kronos_daily.py` runs offline inference in a separate Python environment with reviewed [Kronos source](https://github.com/shiyu-coder/Kronos), its runtime dependencies and pinned model weights. Run `--help` for inputs. Provide the last completed date and up to five verified future exchange sessions. Use `--refresh` to fetch explicit front-adjusted Tencent bars, or reuse a matching snapshot. Outputs stay under `ETF_DATA/private/tom/`. The live API reads those files and does not run the model.
+- The tracked stock is 利尔化学 (`sz002258`). The same stock endpoint adds `comparison` (recent archived forecasts, actual outcomes and mean absolute error by horizon) and `intraday` (latest separate five-minute projection). Forecast and score rows are written once per issue and target date in `forecast-history.sqlite3`. Compare against the issue-day close on the same settled targets. Rebase the actual close to the issue's price basis after a qfq adjustment. Missing bars remain unscored.
+- Install the units under `scripts/systemd/` with the dedicated CPU runtime in `/opt/etf-monitor/kronos-runtime`. Daily jobs start at 15:20 Shanghai time with later retries. The intraday job first checks after 09:35, skips already processed bars, and uses only completed five-minute candles. Its red overlay does not enter the daily score. The confirmed SZSE holiday table covers 2026. Update it from the next year's official notice before dates beyond its coverage can be scheduled.
+
 ## User sector exclusions — v2.16.2
 
 The user explicitly excludes 建材159745, 房地产512200 and 基建516950 from
@@ -70,6 +114,21 @@ projections, including pre-upgrade snapshots. Raw quotes, daily/minute history,
 the full26-member basket/flow calculations, watchlist and prior research/event
 records remain available. Historical engines and entry/exit conditions are
 unchanged. There is no mandatory broad-market filter or external notification.
+
+## Sized simulated trades and history — v2.20.0
+
+The ledger records the smallest multiple of 100 shares whose entry reference
+value exceeds CNY 10,000. Existing ledger entries derive their quantities from
+the saved entry reference. An exit closes the same quantity at the saved exit
+reference. Amounts and gross price P&L are in CNY, with no fee, dividend, or
+slippage assumptions. Gross return is a fraction of entry value.
+
+Authenticated `GET /api/research/paper-trades` reads SQLite directly with
+`status=all|open|closed`, inclusive entry dates `start` and `end` in
+`YYYY-MM-DD`, and a one-based `page`. Returns 25 trades per page in descending
+entry order. Holding days are calendar days. Filtered gross return uses the
+total entry value of priced exits. The endpoint creates neither fills nor a
+missing database.
 
 ## Durable simulated trades and today's exits — v2.19.0
 
@@ -240,3 +299,36 @@ to hold the separate cleared result for compatibility. Brief text calls the
 new amount snapshot revaluation; historical clearing data still determine its
 existing tone, so this provisional observation is not an entry or market gate.
 API reads use local evidence only and add no source requests.
+## 分钟数据回退与总览缓存（v2.26.2）
+
+- 1分钟K保留东方财富主源，失败时回退腾讯真实1分钟OHLC；数据源状态单独展示为`腾讯1分钟K`。
+  5/15/30/60分钟仍沿用原回退链，不把分时采样价格变成OHLC。未来结束时间的分钟不输出。
+- 清算份额更新造成日线篮子缓存失效时，相同输入只重算一次，供并发请求复用。
+  份额权重、价格文件或报告期数据变化即失效；请求不写盘、不触发维护任务。
+
+## 盘中成交观察（v2.25.1）
+
+`GET /api/team` 新增 `turnover`，认证与原 ETF 页面相同。GET 只读取缓存，
+不会采样或访问行情源；沿用现有 20 秒报价与约 5 分钟的腾讯分时缓存。
+
+- 金额单位元，固定 26 只成分，累计总额要求完整有效报价；缺失保留 `null`。
+- `one_minute` / `five_minute` 为真实累计成交额采样端点差，返回 `start`、`end`
+  和 `elapsed_seconds`。容许目标窗口偏差 15 秒；间隔超过 45 秒、金额回退、跨午休时留空。
+- `curve` 使用完整固定交易时钟，实际曲线只在 26 只全部覆盖且分钟已结束时输出。
+  不补零、不插值；09:30 含开盘累计成交，13:00 重复基准不计为新增分钟。
+- `ratio` = 对应5分钟端点累计成交额 / 前20个完整交易日同时点均额。
+  `baseline_interval=5`，`comparison_time` 标明实际对比时点；历史每一日要求全部26只的48个真实5分钟端点。
+  不足20日不输出倍数、基准线或收盘预测。`curve.expected` 只在5分钟端点有值，不插值。
+- `projected_close_amount` 按上述历史成交进度外推，分时超过 420 秒停用。
+  收盘完整点仅返回实际成交额；不以直线时间进度或固定 U 型分布填补历史。
+- `comparison` 为历史分时描述性对照，逐日使用该日前的 20 日基准。
+  清算份额变化只连接同一天、相邻交易日、26 只均已验证的记录；否则为待公布。
+  不能将此比率解释成国家队买入准确率或资金净流入。
+- 1.3 / 1.8 倍为经验观察线。方法参考
+  [大虾皮公开说明](https://daxiapi.com/etf-turnover.html)，行情仍来自现有数据源。
+  `national/turnover/` 保存最多 45 个日期的累计分时衍生档案，
+  `national/turnover_samples/` 保存最近 3 日实际报价采样；都由现有采集锁保护。
+  不改写原始快照、官方份额、策略或模拟交易流水。
+- `scripts/backfill_turnover.py` 补拉公开历史5分钟真实成交额，保留来源输入与校验摘要。
+  输出到隔离/发布目录，经停采集的发布步骤导入 `national/turnover_5m/`；
+  新交易日沿用原分时档案中的真实5分钟端点继续积累，不增加定时上游请求。

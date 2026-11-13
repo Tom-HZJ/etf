@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
-import { LayoutGrid, Landmark, LineChart, LogOut, Moon, Radar, RefreshCw, Sun, Database } from 'lucide-react';
+import { LayoutGrid, Landmark, LineChart, LogOut, Moon, Radar, RefreshCw, Sun, Database, Wallet } from 'lucide-react';
 import type { Quote, Session, SourceHealth, AuthMode } from '../api/types';
 import { deltaClass, fmtPct, fmtNum, fmtDateTime, sessionLabel } from '../lib/format';
 import { ROUTES, hrefFor, routeMeta, type RouteKey } from '../lib/router';
@@ -17,6 +17,8 @@ const NAV_ICONS: Record<RouteKey, typeof LayoutGrid> = {
   market: LineChart,
   data: Database,
   research: LineChart,
+  stocks: LineChart,
+  funds: Wallet,
 };
 
 function Brand({ compact = false }: { compact?: boolean }): React.JSX.Element {
@@ -59,7 +61,7 @@ function Rail({
         <Brand />
       </div>
       <nav className="rail__nav">
-        {ROUTES.map((item) => (
+        {ROUTES.filter(item => !item.private || user === 'tom').map((item) => (
           <a
             key={item.key}
             className="navlink"
@@ -96,7 +98,7 @@ function Rail({
           </button>
         </div>
         <div className="mono mt-3 flex items-center justify-between text-[9px] tracking-[0.08em] text-[var(--etf-faint)]">
-          <span>v2.19.0 · CONTRACT v2.2</span>
+          <span>v{__ETF_RELEASE_VERSION__} · CONTRACT v2.2</span>
           <span>SHANGHAI</span>
         </div>
         <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-[var(--etf-line)] pt-2.5">
@@ -213,10 +215,10 @@ function Tape({ indices }: { indices: Quote[] | undefined }): React.JSX.Element 
   );
 }
 
-function MobileBar({ route }: { route: RouteKey }): React.JSX.Element {
+function MobileBar({ route, user }: { route: RouteKey; user: string | null }): React.JSX.Element {
   return (
-    <nav className="mobilebar" aria-label="主导航（移动端）">
-      {ROUTES.map((item) => {
+    <nav className="mobilebar" data-private={user === 'tom' ? 'true' : undefined} aria-label="主导航（移动端）">
+      {ROUTES.filter(item => !item.private || user === 'tom').map((item) => {
         const IconComponent = NAV_ICONS[item.key];
         return (
           <a
@@ -296,13 +298,13 @@ export function AppShell({
             <footer className="mt-10 border-t border-[var(--etf-line)] pt-4 text-[10.5px] leading-relaxed text-[var(--etf-faint)]">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span>ETF 观察台 · 私有研究站 · 数据仅供研究，不构成投资建议</span>
-                <span className="mono">Asia/Shanghai · v2.19.0</span>
+                <span className="mono">Asia/Shanghai · v{__ETF_RELEASE_VERSION__}</span>
               </div>
             </footer>
           </div>
         </div>
       </div>
-      <MobileBar route={route} />
+      <MobileBar route={route} user={user} />
     </>
   );
 }

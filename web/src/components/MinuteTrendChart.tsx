@@ -16,10 +16,9 @@ import type {
   WhitespaceData,
 } from "lightweight-charts";
 import { AdaptiveTradeLabels } from "./AdaptiveTradeLabels";
-import type { MinuteBar } from "../api/types";
 import type { ThemeMode } from "../lib/hooks";
-import { buildSessionFrame, completeLineRuns, indexClock, minutePricePoints } from "../lib/sessionAxis";
-import type { FramePoint, MinutePricePoint } from "../lib/sessionAxis";
+import { buildSessionFrame, clockIndex, completeLineRuns, indexClock, minutePricePoints, shanghaiStamp } from "../lib/sessionAxis";
+import type { FramePoint, MinutePricePoint, SessionPriceBar } from "../lib/sessionAxis";
 
 const COLORS = {
   dark: {
@@ -39,6 +38,7 @@ const COLORS = {
 };
 type Frame = ReturnType<typeof buildSessionFrame>;
 const NO_BUY_POINTS: readonly MinutePricePoint[] = [];
+const NO_PROJECTION: readonly { time: string; price: number }[] = [];
 interface LiveChart {
   chart: IChartApi;
   morning: ISeriesApi<"Line">;
@@ -51,6 +51,7 @@ interface LiveChart {
   runs: ISeriesApi<"Line">[];
   buySeries: ISeriesApi<"Line">;
   buyMarkers: AdaptiveTradeLabels;
+  projection?: ISeriesApi<"Line">;
   pin: () => void;
 }
 function linePoints(
@@ -73,8 +74,9 @@ export function MinuteTrendChart({
   breakOnMissing = false,
   buyPoints = NO_BUY_POINTS,
   exitPoints = NO_BUY_POINTS,
+  projection = NO_PROJECTION,
 }: {
-  bars: MinuteBar[];
+  bars: SessionPriceBar[];
   interval: number;
   basis?: number | null;
   height?: number;
@@ -83,6 +85,7 @@ export function MinuteTrendChart({
   breakOnMissing?: boolean;
   buyPoints?: readonly MinutePricePoint[];
   exitPoints?: readonly MinutePricePoint[];
+  projection?: readonly { time: string; price: number }[];
 }): React.JSX.Element {
   const container = useRef<HTMLDivElement>(null),
     axis = useRef<HTMLDivElement>(null);
@@ -256,9 +259,24 @@ export function MinuteTrendChart({
     const actual = frame.line.flatMap((p) =>
       p.value !== undefined ? [Math.abs(p.value)] : [],
     );
+    const base = frame.basis;
+    const projected = base ? projection.flatMap((point) => {
+      const stamp = shanghaiStamp(point.time);
+      const index = stamp?.day === frame.day ? clockIndex(stamp.minute) : null;
+      return index === null || !Number.isFinite(point.price) || point.price <= 0
+        ? [] : [{ time: index * 60 as UTCTimestamp, value: (point.price / base - 1) * 100 }];
+    }) : [];
+    if (projected.length && !state.projection) {
+      state.projection = state.chart.addSeries(LineSeries, {
+        ...state.morning.options(),
+        color: mode === 'dark' ? '#ff6b64' : '#bd3028',
+        lineStyle: LineStyle.Dashed,
+      });
+    }
+    state.projection?.setData(projected);
     state.extent = Math.max(
       state.extent,
-      Math.ceil(Math.max(0.5, ...actual, ...points.map(p=>Math.abs(p.value))) * 1.15 * 2) / 2,
+      Math.ceil(Math.max(0.5, ...actual, ...points.map(p=>Math.abs(p.value)), ...projected.map(p=>Math.abs(p.value))) * 1.15 * 2) / 2,
     );
     const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
     setCaption(
@@ -267,13 +285,13 @@ export function MinuteTrendChart({
     state.pin();
     const raf = requestAnimationFrame(state.pin);
     return () => cancelAnimationFrame(raf);
-  }, [bars, interval, basis, mode, breakOnMissing, buyPoints, exitPoints]);
+  }, [bars, interval, basis, mode, breakOnMissing, buyPoints, exitPoints, projection]);
   return (
     <div
       className="chart chart--fixed-session"
       style={{ height }}
       role="img"
-      aria-label={`${ariaLabel}，固定09:30至15:00，午间休市，未来无价格`}
+      aria-label={`${ariaLabel}，固定09:30至15:00，午间休市${projection.length ? '，红色虚线为预测' : '，未来无价格'}`}
     >
       <div
         ref={container}

@@ -13,9 +13,9 @@ from pathlib import Path
 
 # ---------------------------------------------------------------- 版本与标识
 
-APP_VERSION = "2.19.0"
+APP_VERSION = "2.26.2"
 PRODUCT = "ETF 观察台"
-BUILT_AT = "2026-11-09"
+BUILT_AT = "2026-11-11"
 SCHEMA_VERSION = 1
 
 #: 规则版本号（热点/趋势阈值变更时递增，写入 payload 便于追溯）
@@ -100,6 +100,7 @@ HTTP_RETRIES = 2
 TENCENT_QUOTE_URL = "https://qt.gtimg.cn/q="
 TENCENT_BARS_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 TENCENT_INTRADAY_URL = "https://web.ifzq.gtimg.cn/appstock/app/day/query"
+TENCENT_MINUTE_URL = "https://ifzq.gtimg.cn/appstock/app/kline/mkline"
 TENCENT_SEARCH_URL = "https://smartbox.gtimg.cn/s3/?q={query}&t=all"
 EASTMONEY_QUOTE_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get"
 EASTMONEY_STOCK_URL = "https://push2.eastmoney.com/api/qt/stock/get"
@@ -448,6 +449,11 @@ USER_EXCLUDED_TRADE_CODES: dict[str, str] = {
     "sh512200": "房地产",
     "sh516950": "基建",
     "sh563300": "中证2000",
+    "sh515210": "钢铁",
+    "sh512660": "军工",
+    "sh512810": "国防军工",
+    **{code: entity.direction for code, entity in ENTITIES.items()
+       if entity.direction in {"建材", "房地产", "基建", "建筑", "钢铁", "军工", "国防军工"}},
 }
 # Only verified same-index products are alternatives. 创业板50 is a distinct
 # index, so159949 must not be merged with the 创业板指数 products.

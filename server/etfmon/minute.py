@@ -105,6 +105,8 @@ def _save(code: str, interval: int, bars: Sequence[dict[str, Any]], source: str,
 
 def _response(payload: dict[str, Any] | None, code: str, interval: int, limit: int, warning: str | None) -> dict[str, Any]:
     bars = list((payload or {}).get("bars") or [])
+    cutoff = store.now().strftime("%Y-%m-%d %H:%M")
+    bars = [bar for bar in bars if str(bar.get("time") or "") <= cutoff]
     if limit and len(bars) > limit:
         bars = bars[-limit:]
     public_bars = [

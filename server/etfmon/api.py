@@ -27,6 +27,8 @@ CLIENT_VALUE = "web-v1"
 MAX_BODY_BYTES = 64 * 1024
 HEALTH_PATH = "/api/health"
 AUTH_PREFIX = "/api/auth/"
+PRIVATE_PREFIX = "/api/private/"
+PRIVATE_OWNER = "tom"
 
 
 class ApiError(Exception):
@@ -214,8 +216,22 @@ def dispatch_get(app: views.App, path: str, query: Mapping[str, list[str]]) -> d
         return views.build_health(app)
     if path == "/api/overview":
         return views.build_overview(app)
+    if path == "/api/private/funds":
+        from . import private_workspace
+        return private_workspace.funds()
+    if path == "/api/private/stock":
+        from . import private_workspace
+        return private_workspace.stock(app, _parse_code(_first(query, "code")))
     if path == "/api/team":
         return views.build_team(app)
+    if path == "/api/team/flow":
+        # 份额趋势只看已落盘的交易所数据；GET 不触发任何抓取。
+        from . import national_flow
+        return national_flow.build()
+    if path == "/api/team/live":
+        # 盘中成交额代理；同样只读已落盘数据。
+        from . import national_live
+        return national_live.build()
     if path == "/api/hotspots":
         return views.build_hotspots(app)
     if path == "/api/research":
@@ -226,6 +242,18 @@ def dispatch_get(app: views.App, path: str, query: Mapping[str, list[str]]) -> d
         from . import actions
         try:return actions.build_payload(model=_first(query,'model') or 'current',protection=_first(query,'protection') or 'none')
         except ValueError as exc:raise ApiError(400,'bad_request',str(exc)) from exc
+    if path == "/api/research/paper-trades":
+        from . import paper
+        try:
+            return paper.review(
+                status=_first(query, 'status') or 'all',
+                start=_first(query, 'start'),
+                end=_first(query, 'end'),
+                page=int(_first(query, 'page') or '1'),
+                quotes=views._cached_quotes(app)[0],
+            )
+        except ValueError as exc:
+            raise ApiError(400, 'bad_request', str(exc)) from exc
     if path == "/api/research/replay":
         from . import replay
         code = _parse_code(_first(query, "code"))
@@ -434,7 +462,7 @@ class EtfHTTPRequestHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _is_admin(user: str | None) -> bool:
-        return bool(user) and str(user) in config.admin_users()
+        return bool(user) and str(user).casefold() != 'test' and str(user) in config.admin_users()
 
     def _client_ip(self) -> str:
         forwarded = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
@@ -463,10 +491,14 @@ class EtfHTTPRequestHandler(BaseHTTPRequestHandler):
             return True
         if path == HEALTH_PATH or path == "/api/auth" or path.startswith(AUTH_PREFIX):
             return True
-        if self._current_user() is not None:
-            return True
-        self._write_error(ApiError(401, "unauthorized", "需要登录"))
-        return False
+        user = self._current_user()
+        if user is None:
+            self._write_error(ApiError(401, "unauthorized", "需要登录"))
+            return False
+        if path.startswith(PRIVATE_PREFIX) and user != PRIVATE_OWNER:
+            self._write_error(ApiError(403, "forbidden", "此功能仅向 tom 开放"))
+            return False
+        return True
 
     # -- 认证端点 ------------------------------------------------------
     def _auth_session(self) -> None:
@@ -612,6 +644,8 @@ class EtfHTTPRequestHandler(BaseHTTPRequestHandler):
                     return
                 if not self._require_session(path):
                     return
+                if (self._current_user() or '').casefold() == 'test':
+                    raise ApiError(403, "forbidden", "test 账号仅可查看")
                 if path == "/api/admin/sessions/revoke-all":
                     self._require_client_header()
                     self._admin_revoke_all()

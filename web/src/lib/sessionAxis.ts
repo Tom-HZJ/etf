@@ -1,4 +1,5 @@
 import type { MinuteBar } from "../api/types";
+export type SessionPriceBar = Pick<MinuteBar, 'time' | 'close'> & { open?: number; volume: number | null };
 export type FramePoint = { time: number; value?: number; rising?: boolean };
 export interface MinutePricePoint {time:string;price:number;id:string;kind?:'sell'|'risk'}
 export function minutePricePoints(points:readonly MinutePricePoint[],day:string,basis:number|null,now=Date.now()){
@@ -58,7 +59,7 @@ export function shanghaiStamp(value: string) {
   };
 }
 export function buildSessionFrame(
-  bars: readonly MinuteBar[],
+  bars: readonly SessionPriceBar[],
   {
     interval = 1,
     basis = null,
@@ -76,7 +77,7 @@ export function buildSessionFrame(
       .sort()
       .at(-1) ||
     new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
-  const samples = new Map<number, MinuteBar>();
+  const samples = new Map<number, SessionPriceBar>();
   for (const { bar, stamp } of parsed) {
     if (stamp.day !== day || !Number.isFinite(bar.close) || bar.close <= 0)
       continue;
@@ -106,11 +107,11 @@ export function buildSessionFrame(
     }
     line.push({ time, value: (bar.close / base - 1) * 100 });
     volume.push(
-      Number.isFinite(bar.volume) && bar.volume >= 0
+      bar.volume !== null && Number.isFinite(bar.volume) && bar.volume >= 0
         ? {
             time,
             value: bar.volume,
-            rising: Number.isFinite(bar.open) && bar.close >= bar.open,
+            rising: bar.open !== undefined && Number.isFinite(bar.open) && bar.close >= bar.open,
           }
         : { time },
     );

@@ -101,5 +101,9 @@ class SettledSharesTest(unittest.TestCase):
         self.assertEqual(overview['national']['snapshot_estimate'],team['live_flow']);self.assertEqual(team['live_flow']['amount'],80)
         self.assertEqual(overview['national']['today_flow'],60);self.assertEqual(overview['national']['flow_date'],'2026-11-09')
         self.assertEqual(team['latest_close']['amount'],60)
-        self.assertIn('快照差额重估',overview['brief']['bullets'][0]);self.assertNotIn('净申购',overview['brief']['bullets'][0])
+        # The new market brief cannot borrow the old clearing amount or the
+        # independent snapshot estimate when its own minute inputs are missing.
+        self.assertEqual(overview['market_activity']['state'],'unavailable')
+        self.assertIn('待更新',overview['brief']['headline'])
+        self.assertNotIn('净申购',str(overview['brief']))
 if __name__=='__main__':unittest.main()

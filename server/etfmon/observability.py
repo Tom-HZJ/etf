@@ -46,6 +46,7 @@ SOURCES: tuple[SourceSpec, ...] = (
     SourceSpec("sina_bars", "新浪日线", "bars", 3),
     SourceSpec("tencent_intraday", "腾讯分时", "intraday", 1),
     SourceSpec("eastmoney_minute", "东方财富分钟K", "intraday", 2),
+    SourceSpec("tencent_minute", "腾讯1分钟K", "intraday", 3),
     SourceSpec("sina_minute", "新浪分钟K", "intraday", 3),
     SourceSpec("eastmoney_fund", "东方财富基金档案", "fund", 1),
 )

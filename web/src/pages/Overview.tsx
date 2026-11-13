@@ -24,6 +24,7 @@ import { Delta, Metric } from '../components/Numbers';
 import { BreadthTicks, HeatBar, MiniBars, Sparkline } from '../components/Spark';
 import { HotStateBadge, LabelBadge, TrendBadge } from '../components/StateBadge';
 import { ErrorPanel, PanelSkeleton } from '../components/States';
+import { MarketActivityPanel } from '../components/MarketActivityPanel';
 
 
 function NationalFeature({ data }: { data: OverviewResponse }): React.JSX.Element {
@@ -120,36 +121,6 @@ function NationalFeature({ data }: { data: OverviewResponse }): React.JSX.Elemen
         </div>
       </div>
     </Panel>
-  );
-}
-
-function BriefCard({ brief, asOf }: { brief: OverviewResponse['brief']; asOf: string }): React.JSX.Element {
-  const toneText = brief.tone === 'positive' ? '偏暖' : brief.tone === 'risk' ? '偏弱' : '中性';
-  const toneClass = brief.tone === 'positive' ? 'badge-up' : brief.tone === 'risk' ? 'badge-down' : 'badge-gold';
-  return (
-    <section className="brief enter shrink-0" aria-labelledby="brief-headline">
-      <div className="flex items-center justify-between gap-3">
-        <div className="eyebrow">
-          <span>BRIEF</span>
-          <span className="divider-dot" aria-hidden="true" />
-          <span className="text-[var(--etf-faint)]">今日观察</span>
-        </div>
-        <span className={`state-badge ${toneClass}`}>{toneText}</span>
-      </div>
-      <h2 className="brief__headline" id="brief-headline" aria-live="polite">
-        {brief.headline}
-      </h2>
-      <ul className="brief__bullets">
-        {brief.bullets.slice(0, 3).map((bullet) => (
-          <li key={bullet}>{bullet}</li>
-        ))}
-      </ul>
-      <div className="mono mt-3 flex items-center gap-2 text-[8.5px] tracking-[0.08em] text-[var(--etf-faint)]">
-        <span>{fmtTime(asOf)} CST</span>
-        <span className="divider-dot" aria-hidden="true" />
-        <span>确定规则生成 · 非投资建议</span>
-      </div>
-    </section>
   );
 }
 
@@ -350,6 +321,8 @@ export function OverviewPage({
   refreshTick: number;
 }): React.JSX.Element {
   const data = overview.data;
+  const [now,setNow]=useState(Date.now());
+  useEffect(()=>{const timer=window.setInterval(()=>setNow(Date.now()),15_000);return()=>window.clearInterval(timer);},[]);
   return (
     <>
       <PageHeader
@@ -391,6 +364,8 @@ export function OverviewPage({
       ) : null}
 
       {data ? (
+        <>
+        {data.market_activity ? <MarketActivityPanel data={data.market_activity} now={now} failed={overview.status === 'error'} /> : null}
         <div className="grid gap-4 xl:grid-cols-12 xl:items-start">
           <div className="space-y-4 xl:col-span-9">
             <div className="grid gap-4 xl:grid-cols-12">
@@ -398,7 +373,6 @@ export function OverviewPage({
                 <NationalFeature data={data} />
               </div>
               <div className="flex flex-col gap-4 xl:col-span-7">
-                <BriefCard brief={data.brief} asOf={data.as_of} />
                 <HotTop data={data.hotspots} />
               </div>
             </div>
@@ -409,6 +383,7 @@ export function OverviewPage({
             <Breadth breadth={data.breadth} />
           </aside>
         </div>
+        </>
       ) : null}
     </>
   );

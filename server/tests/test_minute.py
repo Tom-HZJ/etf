@@ -102,8 +102,40 @@ class ParserTest(unittest.TestCase):
         with self.assertRaises(sources.SourceError):
             sources.fetch_sina_minute("sh510300", 1, 10)
 
+    def test_one_minute_falls_back_to_real_tencent_ohlc(self) -> None:
+        observability.registry.reset()
+        payload = {"data": {"sh512480": {"m1": [
+            ["202611121311", "0.823", "0.825", "0.826", "0.823", "59339", {}, "2.784"],
+        ]}}}
+        with mock.patch.object(sources, "fetch_eastmoney_minute", side_effect=sources.SourceError("down")), \
+                mock.patch.object(sources, "_http_get", return_value=__import__('json').dumps(payload)):
+            bars, source = sources.fetch_minute("sh512480", 1, 240)
+        self.assertEqual(source, "tencent")
+        self.assertEqual(bars, [dict(time="2026-11-12 13:11", date="2026-11-12", open=.823,
+                                    close=.825, high=.826, low=.823, volume=59339., amount=None)])
+        self.assertEqual(observability.registry.metric("tencent_minute").fallback_count, 1)
+        observability.registry.reset()
+
+    def test_tencent_rejects_bad_geometry_nonfinite_conflicts_and_lunch(self) -> None:
+        rows = [["202611121311", "1", "2", "2", "1", "20"]]
+        rows += [rows[0], [*rows[0][:2], "1.5", *rows[0][3:]]]
+        rows += [["202611121312", "1", "2", "1", "1", "20"],
+                 ["202611121313", "1", "2", "2", "1", "NaN"],
+                 ["202611121200", "1", "2", "2", "1", "20"],
+                 ["202611121314", "1", "2", "2", "1", "0"]]
+        p = sources.parse_tencent_minute({"data": {"sh512480": {"m1": rows}}}, "sh512480")
+        self.assertEqual([b["time"] for b in p["bars"]], ["2026-11-12 13:14"])
+
 
 class CacheTest(_MinuteBase):
+    def test_future_end_is_withheld_even_from_cache(self) -> None:
+        now = store.now().replace(year=2026, month=11, day=12, hour=13, minute=11, second=30)
+        payload = dict(bars=[bar("2026-11-12 13:11"), bar("2026-11-12 13:12")], source="tencent")
+        with mock.patch.object(store, "now", return_value=now):
+            response = minute._response(payload, "sh512480", 1, 240, None)
+        self.assertEqual(response["count"], 1)
+        self.assertEqual(response["as_of"], "2026-11-12 13:11")
+
     def test_is_fresh_ttl(self) -> None:
         now = store.now()
         payload = {"fetched_at": now.isoformat(timespec="seconds")}

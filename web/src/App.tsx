@@ -6,7 +6,7 @@ import { fetchAuthSession, fetchOverview, forwardLogout, logoutRequest } from '.
 import { setUnauthorizedHandler } from './api/http';
 import type { AuthLoginResponse, AuthMode, AuthSessionResponse } from './api/types';
 import { useDocumentTitle, useOnline, useResource, useThemeMode } from './lib/hooks';
-import { routeMeta, useHashRoute } from './lib/router';
+import { DEFAULT_ROUTE, routeMeta, useHashRoute } from './lib/router';
 import type { ParsedHash } from './lib/router';
 import { AppShell } from './components/AppShell';
 import { ToastProvider } from './components/ToastHost';
@@ -25,6 +25,7 @@ const MarketPage = lazy(() =>
   import('./pages/Market').then((module) => ({ default: module.MarketPage })),
 );
 const DataPage = lazy(() => import('./pages/Data').then((module) => ({ default: module.DataPage })));
+const PrivateWorkspacePage = lazy(() => import('./pages/PrivateWorkspace'));
 
 type AuthState =
   | { status: 'checking' }
@@ -69,7 +70,8 @@ function AuthenticatedApp({
   const [refreshTick, setRefreshTick] = useState(0);
   const overview = useResource((signal) => fetchOverview(signal), [], { pollMs: CACHED_SUMMARY_REFRESH_MS });
   const data = overview.data;
-  const { key, params } = route;
+  const key = routeMeta(route.key).private && user !== 'tom' ? DEFAULT_ROUTE : route.key;
+  const params = route.params;
 
   const refreshAll = (): void => {
     setRefreshTick((value) => value + 1);
@@ -106,7 +108,7 @@ function AuthenticatedApp({
           {key === 'team' ? <TeamPage mode={mode} refreshTick={refreshTick} /> : null}
           {key === 'hotspots' ? <HotspotsPage refreshTick={refreshTick} /> : null}
           {key === 'market' ? (
-            <MarketPage mode={mode} refreshTick={refreshTick} initialCode={params.get('code')} />
+            <MarketPage mode={mode} refreshTick={refreshTick} initialCode={params.get('code')} editable={user?.toLowerCase() !== 'test'} />
           ) : null}
           {key === 'data' ? (
             <DataPage
@@ -116,6 +118,7 @@ function AuthenticatedApp({
               onLogout={onLogout}
             />
           ) : null}
+          {key === 'stocks' || key === 'funds' ? <PrivateWorkspacePage view={key} refreshTick={refreshTick} mode={mode} /> : null}
         </Suspense>
       </AppShell>
     </ToastProvider>
@@ -133,7 +136,9 @@ export default function App(): React.JSX.Element {
   }, [auth]);
 
   useDocumentTitle(
-    auth.status === 'authenticated' ? routeMeta(route.key).label : auth.status === 'checking' ? '验证会话' : '登录',
+    auth.status === 'authenticated'
+      ? routeMeta(routeMeta(route.key).private && auth.user !== 'tom' ? DEFAULT_ROUTE : route.key).label
+      : auth.status === 'checking' ? '验证会话' : '登录',
   );
 
   // Session check gate: no business requests are mounted before this resolves.

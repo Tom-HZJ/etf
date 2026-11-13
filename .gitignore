@@ -30,3 +30,4 @@ upgrades/
 web/screenshots/
 .DS_Store
 Thumbs.db
+.alma-snapshots

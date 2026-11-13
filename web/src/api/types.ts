@@ -167,6 +167,7 @@ export interface ChartSpan {
 }
 
 export interface TeamResponse {
+  turnover?: TurnoverView;
   shares_quality?: { verified: number; total: number; latest_complete: string | null; expected: string; source: string; current_day_published: boolean };
   flow_status?: string;
   generated_at: string;
@@ -212,6 +213,46 @@ export interface TeamResponse {
   fetched_at: string | null;
   data_quality: { quotes_ok: number; quotes_failed: number; shares_as_of: string | null; warnings: string[] };
   notes: { method: string; caveat: string };
+}
+
+export interface TurnoverWindow {
+  amount: number;
+  start: string;
+  end: string;
+  elapsed_seconds: number;
+}
+
+export interface TurnoverView {
+  version: number;
+  date: string;
+  state: 'live' | 'lunch' | 'closed' | 'stale';
+  coverage: number;
+  total: number;
+  quote_time: string | null;
+  valid_until: string | null;
+  total_amount: number | null;
+  one_minute: TurnoverWindow | null;
+  five_minute: TurnoverWindow | null;
+  minute_time: string | null;
+  minute_stale: boolean;
+  minute_valid_until: string | null;
+  baseline_days: number;
+  baseline_required: number;
+  baseline_dates: string[];
+  baseline_interval: 5;
+  comparison_time: string | null;
+  ratio: number | null;
+  expected_amount: number | null;
+  projected_close_amount: number | null;
+  level: 'volume' | 'attention' | 'normal' | 'unavailable';
+  curve: { time: string; amount: number | null; expected: number | null }[];
+  rows: { code: string; name: string; group: string; amount: number | null; one_minute: number | null; five_minute: number | null; ratio: number | null }[];
+  comparison: {
+    basis: 'historical_minute_comparison';
+    rows: { date: string; peak_ratio: number; peak_time: string | null; share_delta: number | null; shares_date: string | null }[];
+    volume_days_verified: number;
+    volume_days_increased: number;
+  };
 }
 
 export interface HotspotRow {
@@ -296,6 +337,7 @@ export interface HotspotsResponse {
 }
 
 export interface OverviewResponse {
+  market_activity?: MarketActivity;
   generated_at: string;
   as_of: string;
   trade_date: string;
@@ -342,6 +384,39 @@ export interface OverviewResponse {
   };
   watchlist: { code: string; label: string | null; quote: Quote }[];
   data_health: { status: 'ok' | 'degraded'; warnings: string[]; sources: SourceHealth[] };
+}
+
+export interface ActivityDirection {
+  code: string;
+  direction: string;
+  group: string;
+  amount: number;
+  previous_amount: number;
+  delta: number;
+  ratio: number | null;
+  change_pct: number;
+}
+
+export interface MarketActivity {
+  date: string;
+  previous_date: string | null;
+  as_of: string | null;
+  state: 'live' | 'lunch' | 'closed' | 'stale' | 'unavailable';
+  valid_until: string | null;
+  scope: 'shanghai_shenzhen';
+  unit: 'CNY';
+  amount: number | null;
+  quote_amount: number | null;
+  quote_time: string | null;
+  quote_valid_until: string | null;
+  quote_afternoon_amount: number | null;
+  previous_amount: number | null;
+  delta: number | null;
+  delta_pct: number | null;
+  afternoon_amount: number | null;
+  volume_state: 'expanded' | 'contracted' | 'unchanged' | 'unavailable';
+  markets: { code: string; name: string; amount: number | null; previous_amount: number | null; delta: number | null }[];
+  directions: { up: ActivityDirection[]; down: ActivityDirection[]; compared: number; total: number };
 }
 
 export interface WatchlistResponse {
@@ -508,4 +583,62 @@ export interface MetaResponse {
   definitions: Record<string, string>;
   data_sources: { id: string; name: string; usage: string }[];
   limitations: string[];
+}
+
+// ---------------------------------------------------------------- 国家队份额与实时监控
+
+export interface NationalFlowAlert {
+  level: 'warning';
+  headline: string;
+  detail: string;
+}
+
+export interface NationalFlowWindow {
+  from: string;
+  to: string;
+  delta_yi: number;
+  delta_pct: number;
+}
+
+export interface NationalFlowResponse {
+  state: 'ok' | 'no_data';
+  message?: string;
+  days?: number;
+  first?: string;
+  last?: string;
+  unit?: string;
+  basket_size?: number;
+  min_coverage?: number;
+  suspected_splits?: { date: string; code: string; shares_jump: number; price_move: number; reason: string }[];
+  current_shares_yi?: number;
+  percentile?: number;
+  streak?: { days: number; direction: 'inflow' | 'outflow' | 'none' };
+  windows?: Record<string, NationalFlowWindow>;
+  alert?: NationalFlowAlert | null;
+  series?: { date: string; shares_yi: number }[];
+  notes?: string[];
+}
+
+export interface NationalLiveMover {
+  code: string;
+  amount_yi: number;
+  ratio: number;
+}
+
+export interface NationalLiveResponse {
+  state: 'ok' | 'no_data';
+  message?: string;
+  date?: string;
+  as_of?: string;
+  basket_size?: number;
+  amount_yi?: number;
+  baseline_days?: number;
+  baseline_amount_yi?: number | null;
+  ratio?: number | null;
+  alert?: NationalFlowAlert | null;
+  top_movers?: NationalLiveMover[];
+  baseline_detail?: { date: string; time: string; amount_yi: number }[];
+  curve?: { time: string; amount_yi: number }[];
+  samples_today?: number;
+  notes?: string[];
 }
