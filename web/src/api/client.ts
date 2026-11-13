@@ -19,6 +19,8 @@ import type {
   SearchResponse,
   SourcesResponse,
   Span,
+  NationalFlowResponse,
+  NationalLiveResponse,
   TeamMinuteResponse,
   TeamResponse,
   WatchlistResponse,
@@ -62,6 +64,8 @@ export type {
   SearchResponse,
   SourcesResponse,
   Span,
+  NationalFlowResponse,
+  NationalLiveResponse,
   TeamMinuteResponse,
   TeamResponse,
   WatchlistResponse,
@@ -206,6 +210,22 @@ export async function fetchTeam(signal?: AbortSignal): Promise<TeamResponse> {
     return mockTeam();
   }
   return httpRequest<TeamResponse>('/api/team', { signal });
+}
+
+export async function fetchNationalFlow(signal?: AbortSignal): Promise<NationalFlowResponse> {
+  if (isMock) {
+    await mockDelay(signal);
+    return { state: 'no_data', message: 'mock 模式无份额趋势数据' };
+  }
+  return httpRequest<NationalFlowResponse>('/api/team/flow', { signal });
+}
+
+export async function fetchNationalLive(signal?: AbortSignal): Promise<NationalLiveResponse> {
+  if (isMock) {
+    await mockDelay(signal);
+    return { state: 'no_data', message: 'mock 模式无盘中监控数据' };
+  }
+  return httpRequest<NationalLiveResponse>('/api/team/live', { signal });
 }
 
 export async function fetchTeamMinute(

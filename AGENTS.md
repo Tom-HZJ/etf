@@ -1,8 +1,11 @@
 # Working on ETF Observatory
 
-- From2026-11-10 user instructs treating the day's already recorded buys and subsequent sell/stop discoveries as reference-price simulated fills. The active expanded/none desk uses the durable SQLite ledger at `research/paper/trades.sqlite3`, not retrospectively rebuilt replay positions. Seed only actual earliest recorded buys in current eligible scope from the starting day; never add pre-start/replay fills. One open position and one actual buy per ETF/day, with idempotent event identity and T+1. Sell/stop executes the simulation at the observed quote reference (including close-required observations), never a claimed broker fill or completed daily confirmation. Persist source event/time/price before derived JSON; recover original points from ledger observations on restart. No assumed quantity, capital, costs or net return. Track existing ledger holdings for exits if a later representative selection changes; no new buys outside selected scope. Historical v3/v4/v5 replays remain unchanged. Today's sells/stop events have a durable first-per-position/kind/confirmation index, independent of the recent-event ring, and same-page minute markers use original discovery time/price.
+- The user authorizes simulated quantities using the fewest 100-share lots strictly above CNY 10,000 at the original entry reference. Backfill only existing ledger rows from their original references; keep event identities, times, and prices. Persist quantities and close the full original quantity, including when exit proceeds are below the entry threshold. Review gross price P&L only, with no assumed fees, portfolio capital, or live orders.
 
-- User explicitly excludes building materials, real estate and infrastructure from trading:159745建材,512200房地产,516950基建. Exclude from live plans, alerts, day-point projections and trade-marker UI, including pre-upgrade snapshots. Retain quotes, original histories/journals and the general watchlist; no actual selling/ordering. Future monitored ETFs in these excluded themes must not bypass this scope. Do not infer a broad market/industry downtrend as a verified fact from this preference or add unrelated industry exclusions.
+- From2026-11-10 user instructs treating the day's already recorded buys and subsequent sell/stop discoveries as reference-price simulated fills. The active expanded/none desk uses the durable SQLite ledger at `research/paper/trades.sqlite3`, not retrospectively rebuilt replay positions. Seed only actual earliest recorded buys in current eligible scope from the starting day; never add pre-start/replay fills. One open position and one actual buy per ETF/day, with idempotent event identity and T+1. Sell/stop executes the simulation at the observed quote reference (including close-required observations), never a claimed broker fill or completed daily confirmation. Persist source event/time/price before derived JSON; recover original points from ledger observations on restart. Track existing ledger holdings for exits if a later representative selection changes; no new buys outside selected scope. Historical v3/v4/v5 replays remain unchanged. Today's sells/stop events have a durable first-per-position/kind/confirmation index, independent of the recent-event ring, and same-page minute markers use original discovery time/price.
+
+- User explicitly excludes building materials, real estate, infrastructure, construction and steel from trading:159745建材,512200房地产,516950基建,515210钢铁. Exclude from live plans, alerts, day-point projections and trade-marker UI, including pre-upgrade snapshots. Retain quotes, original histories/journals, simulated ledger records and the general watchlist; no actual selling/ordering. Future monitored ETFs in these excluded themes must not bypass this scope. Do not infer a broad market/industry downtrend as a verified fact from this preference or add unrelated industry exclusions.
+- From 2026-11-11, exclude 军工512660 and 国防军工512810 from future buys, sells, plans and trade markers. The user explicitly requests removing the 2026-11-10 military simulated buy and the 2026-11-11 steel simulated buy. Record these removals in the ledger's removed-trade archive so their original or rearmed same-day signals cannot recreate them. Other simulation records keep their original identities, times, prices and quantities.
 
 - No daily entry quota: monitoring, representative selection, date changes and first-point notification deduplication never create a buy on their own. Keep the existing conditional own-entry checks.
 - User explicitly selects just one live buy/sell reference among each specified alternative set: chips/semiconductor/STAR50/STARchips, military/defence, aerospace/general aviation, and same-index ChiNext peers. These are user preference alternatives, not claims of identical underlying indices. Select the largest estimated secondary-market size (`shares × price`, CNY) using complete same-day fresh comparisons, freeze daily; never choose a smaller peer for a nicer signal. Nonselected funds disappear from live trade plans/alerts/markers; no candidate-group widgets. Keep159949创业板50 separate. Exclude563300中证2000 from trading as requested. Preserve all raw/history/events and the full26-member national basket.
@@ -22,8 +25,10 @@
 - Replay decisions use only information available at each close. Reference execution is the next available trading session open; never fill at the preceding close or a stop price through a gap. Keep T+1, entry-gap cancellation and causal-prefix tests.
 - Keep strategy versions and paper assumptions explicit; no orders, account access or profitability guarantees.
 - Preserve authenticated API boundaries. Reads must not trigger the maintenance worker. Share existing locks and atomic storage for collector writes.
+- `test` has read-only access to existing ETF features. Only the authenticated `tom` identity may access `/api/private/`. Keep actual fund snapshots and stock experiment outputs under ignored `ETF_DATA/private/tom/` with restricted permissions. Stock experiments use public data only and are separate from ETF trade rules. Fund scenarios use manually confirmed share class, NAV date and redeemable units. Keep new view motion optional and honor reduced-motion preferences.
 - Never commit data, account/session files, secrets, local backup/release archives, dependencies or production hosts. Use environment variables for deployment-specific values.
 - Validate relevant backend tests and TypeScript/build. Use an isolated ETF_DATA directory for tests. Avoid starting multiple collectors on the same store.
+- For cloud releases, carry forward `scripts/deploy_paper_review.py`'s frontend checks into the active deploy script. Set published static files to `0644` and their directories to `0755` after copying. Verify that the Nginx worker can open every published file before switching the live directory and again after switching. Complete release acceptance in an already signed-in Chrome session by reloading `/#/research` and checking that 买卖提醒, the expected version, and 模拟交易复盘 render. Record the browser outcome separately from API health and deployment success.
 - Preserve the same-page research view, returning filters, search, scroll and focus.
 - Three-year rally anatomy is descriptive and separate from B/S: hindsight troughs/peaks must never become historical live signals. Keep fixed thresholds, complete equal follow-up in controls, per-field sample sizes and the listing/suspension evidence. Do not infer historical turnover from current shares.
 
@@ -48,3 +53,35 @@
 - User explicitly rejected 今日大单资金动向 and requests the original legacy estimate. Remove its panel, per-row fields, API exposure and dedicated source worker; do not restart or silently reintroduce it. Preserve already collected archives. Restore the original snapshot-difference total and optional collapsed intraday estimate curve, retaining actual observation times, with concise estimate labels and a definition tooltip. Cleared histories/rows keep official dates and are never overwritten by this provisional estimate. Do not put the estimate into trading rules or inferred investor identity.
 
 - Overview must use the same `snapshot_estimate`/legacy calculation as Team, never show a prior cleared amount under a current estimate label. Keep confirmed-clearing fields separate and do not use the snapshot estimate for bullish/bearish classification or trade gates. Both pages visibly show each raw share date as unknown when absent, archive snapshot labels separately, official value-match dates and any label mismatch. Numerical equality with a dated record is only reference evidence, not proof of the raw source date; ambiguous/missing matches cannot produce a definite interval. State the current price valuation date and that the amount is not current-day net creations. Preserve the original numeric formula and removed order-flow feature state.
+
+## 数据口径的硬伤（2026-11-13 实测，再犯就是浪费时间）
+
+- **未复权日线会毁掉所有回测**。新浪 `CN_MarketData.getKLineData` 返回的是不复权价，ETF 分红除权当天会出现 -50% 甚至 -76% 的假暴跌。把这种序列喂给动量或网格策略，会跑出年化 1708% 这种荒唐结果。可用前复权源（腾讯 qfq、东财 fqt=1）都挂过，此时必须先用「单日跌幅超过 20% 即为除权」的启发式修补，并且在结果里标注这是自建复权、不是官方数据。
+- **多标的组合里，某只标的的数据缺失不能当 0 计入**。实测银行 ETF 缺 2026-11-12/13 两天，50/50 组合净值当天凭空腰斩 -49.4%。净值计算必须按「最后一个已知价格」前向填充，缺失日不得参与新开仓判断。
+- **年化不能用样本点数折算**。月度调仓曲线约 94 个点、跨 8 年，按 244 交易日/年折算会把年化放大十倍。必须用日历跨度（`(end-start).days/365.25`）。
+- **把 N 个子账户的曲线简单平均，会抹掉回撤**。每个子账户大部分时间空仓，平均后变成一条平线，得出「回撤 -1%」这种无意义结论。多标的比较必须用真实组合回放：共享现金、仓位上限、并按日期前向填充。
+- **场外基金净值不含分红**。`fS_name` 对应的 `Data_netWorthTrend` 是单位净值，`Data_ACWorthTrend` 是累计净值。007467 两者差 35 个百分点（+65% vs +100%），用错就低估年化 3 个点。分红日可从 `unitMoney` 字段里的「分红」字样识别。
+- **QDII 的场内溢价可以到 17.85%**。买跨境 ETF 前必须看溢价率，否则买入即亏。这是 A 股制度性约束（外汇额度），不是行情问题。
+
+## 已确认无效的方向（不要再重试）
+
+- **MA5 上穿 MA10 作为核心入场信号**：2020-2026 组合回放年化 -0.21%，20 日前瞻超额 -0.25%（负的）。分三个时段全部为负或恶化。这不是参数问题，是信号本身没有边际优势。
+- **在这套信号上加仓位管理**：全仓、半仓加仓、1R 减仓、波动率加权全试过，收益全部趋零，只有回撤小幅改善。优化没有 edge 的信号不会让它赚钱。
+- **组合级熔断**：-15% 阈值会把策略彻底搞死（208 天只成交 9 笔），-20% 能降回撤但砍掉一半收益。不是有效手段。
+- **MA200 趋势过滤叠加在配置上**：同一组资产，不加过滤年化 13.62%，加了变成 6.49%。A 股里它让你在反弹初期空仓然后追高。
+- **R² 趋势质量过滤**：加在动量上，Calmar 从 0.32 到 0.33，等于没用。
+- **5 分钟粒度做 T**：扣双边 10bp 成本后，四种规则（定时高抛低吸、涨 0.5% 才卖、跌 1% 买、盘中回落卖）全部跑输买入持有。唯一看似「赢」的那个是降仓效应，不是做 T 收益。
+
+## 事后挑选偏差（必须主动披露）
+
+- 「红利/银行/黄金/纳指」四腿组合年化 14.79%、Calmar 0.96，但这个资产列表是看着 2019-2026 历史挑的。换成公开文献的固定配方（永久组合 6.64%、全天候 6.78%、黄金蝶 7.14%）结论立刻不同。
+- 报告任何组合结果时，必须同时说明：权重是事前定的还是事后挑的。风险平价只解决「怎么分」，不解决「选什么」。
+- 资产池里没有债券时不要假装能复现永久组合/全天候；`share_history` 有 208 天份额但 `bars` 长期无债券 ETF，需单独补 `bars_bond`。
+
+## 国家队监控的口径
+
+- 交易所份额是**盘后清算**才公布的，盘中任何“实时份额”都是假的。盘中可观测的只有成交额。
+- `national_flow` 用日度清算份额算窗口变化与连续性；`national_live` 用既有 20 秒报价轮询的累计成交额，与过去 5 日**同一时刻**比，不用收盘值比早盘。
+- 成交额是买卖双向合计，只能说明「很多人在交易」，不能判断方向、更不能识别投资者。接口与页面文案都必须保留这条限制。
+- 份额暴增要排除拆分：单日份额增幅 >30% 且价格同步重挫 >15% 视为疑似拆分，不计入流量判断。
+- 放量排行必须有成交额下限（当前 2 亿元），否则小标的会以「6.2 倍」这种噪音占据榜首。

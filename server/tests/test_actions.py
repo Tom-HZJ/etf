@@ -166,14 +166,14 @@ class ActionsTests(unittest.TestCase):
             self.assertFalse(payload['buy_point_policy'])
 
     def test_user_sector_exclusions_block_plans_before_reading_history(self):
-        excluded={'sz159745','sh512200','sh516950','sh563300'}
+        excluded={'sz159745','sh512200','sh516950','sh563300','sh515210','sh512660','sh512810'}
         self.assertEqual(set(config.USER_EXCLUDED_TRADE_CODES),excluded)
         self.assertTrue(excluded.issubset(config.QUOTE_CODES))
         self.assertTrue(all(not actions.trade_eligible(c) for c in excluded))
         self.assertTrue(actions.trade_eligible('sh512980'))
         self.assertTrue(actions.trade_eligible('sh588000'))
         for code,entity in config.ENTITIES.items():
-            if entity.direction in {'建材','房地产','基建'}:self.assertFalse(actions.trade_eligible(code))
+            if entity.direction in {'建材','房地产','基建','建筑','钢铁','军工','国防军工'}:self.assertFalse(actions.trade_eligible(code))
         with patch.object(actions,'fingerprint',side_effect=RuntimeError('stop-before-history')) as read:
             with self.assertRaises(RuntimeError):actions.build_plans(moment(),[*excluded,'sh512980'])
             self.assertEqual(read.call_args.args[1],['sh512980'])
@@ -182,7 +182,8 @@ class ActionsTests(unittest.TestCase):
         def row(code,kind):return dict(code=code,kind=kind,actionable=True,quote_time=quote()['quote_time'],
             price=10.1,event_id=code,model='expanded',protection='none',observed_at=moment().isoformat(),live_recorded=True)
         with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,{'ETF_DATA':tmp}):
-            rows=[row('sz159745','buy'),row('sh512200','buy'),row('sh516950','risk'),row('sh512980','buy')]
+            rows=[row('sz159745','buy'),row('sh512200','buy'),row('sh516950','risk'),row('sh515210','buy'),
+                  row('sh512660','buy'),row('sh512810','risk'),row('sh512980','buy')]
             payload=dict(date='2026-11-10',generated_at=moment().isoformat(),boards={'expanded-none':dict(rows=rows)},
                          buy_points=rows,recent=rows,buy_point_policy=actions.BUY_POINT_POLICY)
             store.write_json(actions.path('latest.json'),payload)

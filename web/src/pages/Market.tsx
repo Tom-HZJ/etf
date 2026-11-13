@@ -99,7 +99,7 @@ function SymbolRow({
   item: WatchlistResponse['items'][number];
   selected: boolean;
   onSelect: () => void;
-  onRemove: () => void;
+  onRemove?: () => void;
   busy: boolean;
 }): React.JSX.Element {
   return (
@@ -123,7 +123,7 @@ function SymbolRow({
           </div>
         </div>
       </button>
-      <div className="flex items-center pr-1.5">
+      {onRemove ? <div className="flex items-center pr-1.5">
         <IconButton
           label={`从自选移除 ${item.quote?.name ?? item.code}`}
           icon={<Trash2 size={14} />}
@@ -132,7 +132,7 @@ function SymbolRow({
           isDisabled={busy}
           onClick={onRemove}
         />
-      </div>
+      </div> : null}
     </div>
   );
 }
@@ -471,6 +471,7 @@ function WatchlistPanel({
   onRemove,
   onAdd,
   busy,
+  editable,
 }: {
   watchlist: WatchlistResponse;
   selected: string;
@@ -478,6 +479,7 @@ function WatchlistPanel({
   onRemove: (code: string) => void;
   onAdd: (code: string, label: string, kind: Kind) => void;
   busy: string | null;
+  editable: boolean;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -498,11 +500,11 @@ function WatchlistPanel({
   return (
     <Panel
       title="自选清单"
-      sub={`${watchlist.items.length} / 12 个标的`}
+      sub={`${watchlist.items.length} / 12 个标的${editable ? '' : ' · 只读'}`}
       actions={
         <IconButton
-          label={open ? '关闭搜索' : '添加自选'}
-          icon={open ? <X size={15} /> : <Plus size={15} />}
+          label={open ? '关闭搜索' : editable ? '添加自选' : '搜索标的'}
+          icon={open ? <X size={15} /> : editable ? <Plus size={15} /> : <Search size={15} />}
           variant={open ? 'secondary' : 'ghost'}
           size="sm"
           onClick={() => setOpen((value) => !value)}
@@ -511,7 +513,7 @@ function WatchlistPanel({
       bodyClassName=""
       footer={
         <span>
-          上限 12 个；添加/移除会写入后端自选文件。选中标的后查看日/周/月 K 与分时。
+          {editable ? '上限 12 个，选中标的可查看日/周/月 K 与分时。' : '选中或搜索标的可查看行情。'}
         </span>
       }
     >
@@ -537,8 +539,8 @@ function WatchlistPanel({
                   <button
                     key={result.code}
                     type="button"
-                    disabled={added || busy !== null}
-                    onClick={() => onAdd(result.code, result.name, result.kind)}
+                    disabled={editable && (added || busy !== null)}
+                    onClick={() => editable ? onAdd(result.code, result.name, result.kind) : onSelect(result.code)}
                     className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-[var(--etf-ink-2)] transition-colors hover:bg-[var(--etf-surface-3)] disabled:opacity-50"
                   >
                     <span className="min-w-0 truncate">
@@ -546,7 +548,7 @@ function WatchlistPanel({
                       <span className="mono ml-2 text-[9.5px] text-[var(--etf-faint)]">{result.code.slice(2)}</span>
                     </span>
                     <span className="shrink-0 text-[10px] text-[var(--etf-gold)]">
-                      {added ? '已添加' : <Plus size={13} aria-label="添加" />}
+                      {editable ? added ? '已添加' : <Plus size={13} aria-label="添加" /> : '查看'}
                     </span>
                   </button>
                 );
@@ -564,7 +566,7 @@ function WatchlistPanel({
 
       {watchlist.items.length === 0 ? (
         <div className="px-4 py-6 text-center text-[11px] text-[var(--etf-faint)]">
-          还没有自选。点右上角「添加自选」。
+          {editable ? '还没有自选。点右上角「添加自选」。' : '还没有自选，可搜索标的查看。'}
         </div>
       ) : (
         watchlist.items.map((item) => (
@@ -573,7 +575,7 @@ function WatchlistPanel({
             item={item}
             selected={selected === item.code}
             onSelect={() => onSelect(item.code)}
-            onRemove={() => onRemove(item.code)}
+            onRemove={editable ? () => onRemove(item.code) : undefined}
             busy={busy !== null}
           />
         ))
@@ -588,12 +590,14 @@ export function MarketPage({
   initialCode,
   embedded = false,
   initialPeriod = 'day',
+  editable = true,
 }: {
   mode: ThemeMode;
   refreshTick: number;
   initialCode: string | null;
   embedded?: boolean;
   initialPeriod?: ChartPeriod;
+  editable?: boolean;
 }): React.JSX.Element {
   const watchlist = useResource((signal) => fetchWatchlist(signal), [refreshTick]);
   const [selected, setSelected] = useState(initialCode ?? 'sh510300');
@@ -729,6 +733,7 @@ export function MarketPage({
               onSelect={select}
               onRemove={(code) => void remove(code)}
               onAdd={(code, label, kind) => void add(code, label, kind)}
+              editable={editable}
               busy={busy}
             />
           ) : watchlist.status === 'error' ? (

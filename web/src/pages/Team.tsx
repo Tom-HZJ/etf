@@ -5,7 +5,7 @@ import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/Segme
 import { InfoTip } from '@astryxdesign/core/InfoTip';
 import { ChevronRight } from 'lucide-react';
 import type { MinuteInterval, Span, TeamMinuteResponse, TeamResponse } from '../api/types';
-import { fetchTeam, fetchTeamMinute } from '../api/client';
+import { fetchNationalFlow, fetchNationalLive, fetchTeam, fetchTeamMinute } from '../api/client';
 import { useMediaQuery, useResource } from '../lib/hooks';
 import type { Resource, ThemeMode } from '../lib/hooks';
 import {
@@ -32,6 +32,8 @@ import { ErrorPanel, PanelSkeleton } from '../components/States';
 import { KlineChart } from '../components/Charts';
 import { MinuteTrendChart } from '../components/MinuteTrendChart';
 import { basketMinuteBars } from '../lib/basketDisplay';
+import { TurnoverPanel } from '../components/TurnoverPanel';
+import { NationalFlowPanel, NationalLivePanel } from '../components/NationalFlowPanel';
 
 const MINUTE_INTERVALS: MinuteInterval[] = [1, 5, 15, 30, 60];
 
@@ -292,6 +294,13 @@ export function TeamPage({ mode, refreshTick }: { mode: ThemeMode; refreshTick: 
     [minuteInterval, refreshTick],
     { pollMs: 60_000 },
   );
+  const nationalFlow = useResource((signal) => fetchNationalFlow(signal), [refreshTick], {
+    pollMs: CACHED_SUMMARY_REFRESH_MS,
+  });
+  // 盘中数据每 20 秒一个新点；这里 30 秒拉一次就够跟上了。
+  const nationalLive = useResource((signal) => fetchNationalLive(signal), [refreshTick], {
+    pollMs: 30_000,
+  });
   const isMobile = useMediaQuery('(max-width: 767px)');
   const data = team.data;
   const spanData = data?.chart.spans[span];
@@ -410,6 +419,11 @@ export function TeamPage({ mode, refreshTick }: { mode: ThemeMode; refreshTick: 
           </div>
 
           <LegacyEstimateDates flow={data.live_flow}/>
+
+          {data.turnover ? <TurnoverPanel data={data.turnover} now={now} failed={team.status === 'error'} /> : null}
+
+          <NationalLivePanel live={nationalLive.data} failed={nationalLive.status === 'error'} />
+          <NationalFlowPanel flow={nationalFlow.data} />
 
           {data.intraday.length>0 ? <details className="panel"><summary className="cursor-pointer px-4 py-3 text-[12px] text-[var(--etf-muted)]">查看盘中估算走势</summary><div className="px-4 pb-3"><FlowCurve points={data.intraday.map(p=>({time:p.time,amount:p.amount}))} height={isMobile?180:210} label="今日份额快照口径估算走势"/><p className="mt-2 text-[10px] text-[var(--etf-faint)]">份额快照差×现价，随价格重估。</p></div></details> : null}
 

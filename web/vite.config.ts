@@ -1,10 +1,16 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { readFileSync } from 'node:fs';
+
+const backendConfig = readFileSync(new URL('../server/etfmon/config.py', import.meta.url), 'utf8');
+const releaseVersion = /^APP_VERSION\s*=\s*"([^"\n]+)"/m.exec(backendConfig)?.[1];
+if (!releaseVersion) throw new Error('Missing APP_VERSION in server/etfmon/config.py');
 
 // Dev server proxies /api to the local backend; production build is served by nginx.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  define: { __ETF_RELEASE_VERSION__: JSON.stringify(releaseVersion) },
   server: {
     port: 5173,
     proxy: {

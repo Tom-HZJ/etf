@@ -1,0 +1,14 @@
+[Unit]
+Description=Check for completed 5-minute bars during Shenzhen trading
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 09:35..59:40 Asia/Shanghai
+OnCalendar=Mon..Fri *-*-* 10:*:40 Asia/Shanghai
+OnCalendar=Mon..Fri *-*-* 11:00..29:40 Asia/Shanghai
+OnCalendar=Mon..Fri *-*-* 13:05..59:40 Asia/Shanghai
+OnCalendar=Mon..Fri *-*-* 14:*:40 Asia/Shanghai
+AccuracySec=5s
+Unit=etf-kronos@intraday.service
+
+[Install]
+WantedBy=timers.target

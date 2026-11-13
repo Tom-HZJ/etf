@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Iterable, Mapping, Sequence
 
-from . import analytics, config, minute, observability, sources, store, team_minute, research, settled_shares
+from . import analytics, config, minute, observability, sources, store, team_minute, research, settled_shares, turnover, market_activity
 
 LOG = logging.getLogger("etfmon.views")
 
@@ -297,13 +297,37 @@ def compute_chart_cache(moment: datetime | None = None) -> dict[str, Any]:
     }
 
 
-def _load_chart_cache() -> dict[str, Any]:
+_chart_rebuild_lock = threading.Lock()
+_chart_rebuild_key: tuple | None = None
+_chart_rebuild_value: dict[str, Any] = {}
+
+
+def _load_chart_cache(bundle: dict | None = None) -> dict[str, Any]:
+    global _chart_rebuild_key, _chart_rebuild_value
     payload = store.read_json(store.path_for("national", "chart.json"), {})
-    bundle = settled_shares.read_bundle()
+    bundle = bundle if bundle is not None else settled_shares.read_bundle()
     weights = {c:r['shares'] for c,r in bundle['complete'].get(bundle['latest_complete'],{}).items()}
     if (not isinstance(payload, dict) or payload.get('shares_basis')!=settled_shares.VERSION
             or payload.get('weight_date')!=bundle['latest_complete'] or payload.get('weights')!=weights):
-        payload = compute_chart_cache()
+        # The clearing collector can advance the weight date before the daily
+        # chart writer runs. Rebuild once per input revision, shared across
+        # concurrent readers, without writes or starting a worker from GET.
+        paths = [store.path_for("national", "chart.json")]
+        paths += [store.bars_path(c) for c in config.TEAM_CODES]
+        paths += [store.flows_path(c) for c in config.TEAM_CODES]
+        signatures = []
+        for path in paths:
+            try:
+                stat = path.stat()
+                signatures.append((str(path), stat.st_mtime_ns, stat.st_size))
+            except FileNotFoundError:
+                signatures.append((str(path), None, None))
+        key = (bundle['latest_complete'], tuple(sorted(weights.items())), tuple(signatures))
+        with _chart_rebuild_lock:
+            if key != _chart_rebuild_key:
+                rebuilt = compute_chart_cache()
+                _chart_rebuild_value, _chart_rebuild_key = rebuilt, key
+            payload = _chart_rebuild_value
     return payload
 
 
@@ -421,7 +445,8 @@ def build_team(app: App) -> dict[str, Any]:
     now = _now()
     quotes, fetched_at, stale = _cached_quotes(app)
     daily = store.load_daily()
-    settled = settled_shares.build_view(quotes, now, _trading_calendar())
+    calendar = _trading_calendar()
+    settled = settled_shares.build_view(quotes, now, calendar)
     history = settled['history']
     trade_date = resolve_trade_date(quotes, daily)
     latest_day = settled['latest_date']
@@ -432,7 +457,7 @@ def build_team(app: App) -> dict[str, Any]:
     up = sum(1 for row in rows if analytics.to_float(row.get("change_pct")) is not None and (row["change_pct"] or 0) > 0)
     down = sum(1 for row in rows if analytics.to_float(row.get("change_pct")) is not None and (row["change_pct"] or 0) < 0)
     live = _legacy_snapshot_estimate(quotes,daily,trade_date,now,stale,settled['bundle'])
-    chart_cache = _load_chart_cache()
+    chart_cache = _load_chart_cache(settled['bundle'])
     chart = _live_chart(chart_cache, quotes, trade_date)
     warnings: list[str] = []
     if not quotes:
@@ -476,6 +501,7 @@ def build_team(app: App) -> dict[str, Any]:
             "value_date": latest_day,
         },
         "live_flow": live,
+        "turnover": turnover.build_view(quotes, trade_date, now, history, calendar),
         "latest_close": latest_close,
         "history": history,
         "cumulative": cumulative,
@@ -1203,8 +1229,27 @@ def build_brief(
     hotspots: Mapping[str, Any],
     breadth: Mapping[str, Any],
     warnings: Sequence[str],
+    activity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """总览「今日观察」：完全由同一响应里的真实字段生成。"""
+    if activity is not None:
+        state = activity.get("state")
+        amount, delta = activity.get("amount"), activity.get("delta")
+        directions = activity.get("directions") or {}
+        if state in {"stale", "unavailable"} or amount is None:
+            return {"tone": "neutral", "headline": "成交数据待更新", "bullets": ["沪深成交额与方向观察等待有效分时数据。"]}
+        label = "放量" if delta is not None and delta > 0 else "缩量" if delta is not None and delta < 0 else "量能持平" if delta == 0 else "同刻对照待更新"
+        names = "、".join(r["direction"] for r in directions.get("up", [])[:2])
+        headline = f"沪深{label}" + (f" {abs(delta)/1e8:,.0f} 亿" if delta else "")
+        if names:
+            headline += f"，{names}较活跃"
+        bullets = [f"累计成交 {amount/1e8:,.0f} 亿；较上一交易日同刻比较"]
+        if names:
+            bullets.append("放量上涨：" + names)
+        down = "、".join(r["direction"] for r in directions.get("down", [])[:2])
+        if down:
+            bullets.append("放量下跌：" + down)
+        return {"tone": "neutral", "headline": _clip(headline, 30), "bullets": [_clip(b, 40) for b in bullets]}
     five = analytics.to_float(national.get("five_day_flow"))
     five_days = int(national.get("five_day_days") or 0)
     today = analytics.to_float(national.get("today_flow"))
@@ -1299,7 +1344,8 @@ def build_overview(app: App) -> dict[str, Any]:
     quotes, _fetched_at, stale = _cached_quotes(app)
     daily = store.load_daily()
     hotspot_payload = build_hotspots(app)
-    settled = settled_shares.build_view(quotes, now, _trading_calendar())
+    calendar = _trading_calendar()
+    settled = settled_shares.build_view(quotes, now, calendar)
     history = settled['history']
     trade_date = resolve_trade_date(quotes, daily)
     session = resolve_session(trade_date, now)
@@ -1328,7 +1374,7 @@ def build_overview(app: App) -> dict[str, Any]:
     )
     total_shares, total_value = settled["total_shares"], settled["total_value"]
     snapshot_estimate = _legacy_snapshot_estimate(quotes,daily,trade_date,now,stale,settled['bundle'])
-    chart_cache = _load_chart_cache()
+    chart_cache = _load_chart_cache(settled['bundle'])
     chart = _live_chart(chart_cache, quotes, trade_date)
     indices = [quotes.get(code) or _empty_quote(code) for code in config.INDEX_CODES]
     hotspot_rows = list(hotspot_payload.get("rows") or [])
@@ -1387,7 +1433,8 @@ def build_overview(app: App) -> dict[str, Any]:
         "as_of": hotspot_payload.get("as_of"),
     }
     health = _data_health(app, quotes)
-    brief = build_brief(national, hotspots, breadth, health["warnings"])
+    activity = market_activity.build_view(quotes, trade_date, now, calendar)
+    brief = build_brief(national, hotspots, breadth, health["warnings"], activity)
     watchlist = []
     names = _names()
     for item in store.load_watchlist().get("items") or []:
@@ -1418,6 +1465,7 @@ def build_overview(app: App) -> dict[str, Any]:
         "session": session,
         "is_trading": session in {"morning", "afternoon"} and is_today,
         "indices": indices,
+        "market_activity": activity,
         "national": national,
         "hotspots": hotspots,
         "breadth": breadth,

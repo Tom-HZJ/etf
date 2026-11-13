@@ -367,7 +367,8 @@ class ApiTest(unittest.TestCase):
         self.assertIn("sources", payload)
         self.assertIn("groups", payload)
         self.assertIn("alerts", payload)
-        self.assertEqual(len(payload["sources"]), 10)
+        self.assertEqual(len(payload["sources"]), 11)
+        self.assertIn("tencent_minute", {source["id"] for source in payload["sources"]})
         row = payload["sources"][0]
         for key in (
             "id",
@@ -495,7 +496,8 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(status, 200)
         ids = [row["id"] for row in payload["sources"]]
         self.assertNotIn("netease_bars", ids)
-        self.assertEqual(len(ids), 10)
+        self.assertEqual(len(ids), 11)
+        self.assertIn("tencent_minute", ids)
 
     def test_health_sources_fields(self) -> None:
         status, payload = self.json_get("/api/health")
@@ -624,6 +626,21 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(stub["stale"])
         status, _payload = self.json_get("/api/market/quotes?codes=bad")
         self.assertEqual(status, 400)
+
+    def test_paper_trade_review_requires_authentication_and_valid_filters(self) -> None:
+        endpoint = '/api/research/paper-trades'
+        status, _ = self.json_get(endpoint, {'Cookie': ''})
+        self.assertEqual(status, 401)
+        status, payload = self.json_get(endpoint + '?status=closed&page=1')
+        self.assertEqual(status, 200)
+        self.assertTrue(payload['simulated'])
+        self.assertEqual(payload['entry_threshold'], 10_000)
+        self.assertEqual(payload['lot_size'], 100)
+        self.assertEqual(payload['trades'], [])
+        for query in ('status=unknown', 'page=0', 'start=2026-11-31', 'start=2026-11-12&end=2026-11-10'):
+            with self.subTest(query=query):
+                status, _ = self.json_get(endpoint + '?' + query)
+                self.assertEqual(status, 400)
 
     def test_watchlist_flow(self) -> None:
         status, payload = self.json_get("/api/watchlist")

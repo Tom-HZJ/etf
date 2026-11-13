@@ -1,0 +1,22 @@
+[Unit]
+Description=ETF Observatory Kronos %i prediction
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+UMask=0077
+WorkingDirectory=/opt/etf-monitor/kronos-runtime
+Environment=PYTHONPATH=/opt/etf-monitor
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=HF_HOME=/opt/etf-monitor/kronos-runtime/hf
+Environment=HF_HUB_OFFLINE=1
+Environment=OMP_NUM_THREADS=1
+Environment=MKL_NUM_THREADS=1
+ExecStart=/opt/etf-monitor/kronos-runtime/venv/bin/python kronos_daily.py --upstream upstream --data-dir /opt/etf-monitor/data --code sz002258 --scheduled %i
+NoNewPrivileges=true
+CPUQuota=100%
+MemoryMax=1050M
+TimeoutStartSec=75s

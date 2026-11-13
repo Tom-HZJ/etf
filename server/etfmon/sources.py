@@ -385,6 +385,7 @@ def _legacy_source_name(source_id: str) -> str:
         "sina_bars": "sina",
         "eastmoney_bars": "eastmoney",
         "tencent_intraday": "tencent",
+        "tencent_minute": "tencent",
         "eastmoney_minute": "eastmoney",
         "sina_minute": "sina",
         "eastmoney_fund": "eastmoney",
@@ -557,11 +558,11 @@ def fetch_quotes(codes: Iterable[str], *, timeout: int = config.HTTP_TIMEOUT_S) 
 # ---------------------------------------------------------------- 腾讯日线
 
 
-def parse_tencent_bars(payload: dict[str, Any], code: str) -> list[dict[str, Any]]:
+def parse_tencent_bars(payload: dict[str, Any], code: str, *, day_key: str | None = None) -> list[dict[str, Any]]:
     """解析腾讯 fqkline 日线：行格式 ``[date, open, close, high, low, volume]``。"""
     node = ((payload.get("data") or {}).get(code)) or {}
     rows: list[Any] = []
-    for key in ("qfqday", "day", "hfqday"):
+    for key in (day_key,) if day_key else ("qfqday", "day", "hfqday"):
         candidate = node.get(key)
         if isinstance(candidate, list) and candidate:
             rows = candidate
@@ -594,6 +595,7 @@ def fetch_tencent_bars(
     *,
     timeout: int = config.HTTP_TIMEOUT_S,
     retries: int = config.HTTP_RETRIES,
+    require_qfq: bool = False,
 ) -> list[dict[str, Any]]:
     """腾讯前复权日线。"""
     param = f"{code},day,,,{count},qfq"
@@ -603,7 +605,7 @@ def fetch_tencent_bars(
         payload = json.loads(text)
     except ValueError as exc:
         raise SourceError(f"腾讯日线返回非 JSON：{exc}") from exc
-    bars = parse_tencent_bars(payload, code)
+    bars = parse_tencent_bars(payload, code, day_key="qfqday" if require_qfq else None)
     if not bars:
         raise NoDataError(f"{code} 腾讯无日线数据")
     return bars
@@ -808,6 +810,7 @@ def parse_tencent_intraday(payload: dict[str, Any], code: str) -> dict[str, Any]
                     "price": price,
                     "avg": avg,
                     "volume": delta,
+                    "cumulative_amount": cum_amount,
                 }
             )
         if not points:
@@ -902,6 +905,56 @@ def fetch_eastmoney_minute(
     result = parse_eastmoney_minute(payload, code)
     if not result["bars"]:
         raise NoDataError(f"{code} 东财分钟K无数据")
+    return result
+
+
+def parse_tencent_minute(payload: dict[str, Any], code: str) -> dict[str, Any]:
+    """Real provider OHLC, not prices sampled from the intraday line.
+
+    Tencent m1 rows are [YYYYMMDDHHMM, open, close, high, low, volume(lots), ...].
+    Reject conflicting duplicate timestamps rather than choosing one silently.
+    """
+    node = (payload.get("data") or {}).get(code) or {}
+    rows: dict[str, dict[str, Any] | None] = {}
+    for row in node.get("m1") or []:
+        if not isinstance(row, list) or len(row) < 6:
+            continue
+        text = str(row[0])
+        try:
+            stamp = datetime.strptime(text, "%Y%m%d%H%M")
+        except ValueError:
+            continue
+        if stamp.strftime("%Y%m%d%H%M") != text:
+            continue
+        clock = stamp.hour * 60 + stamp.minute
+        if not (571 <= clock <= 690 or 781 <= clock <= 900):
+            continue
+        values = [_to_float(v) for v in row[1:6]]
+        if any(v is None for v in values):
+            continue
+        opening, close, high, low, volume = values
+        if low <= 0 or high < max(opening, close) or low > min(opening, close) or volume < 0:
+            continue
+        key = stamp.strftime("%Y-%m-%d %H:%M")
+        bar = dict(time=key, date=key[:10], open=opening, close=close, high=high, low=low,
+                   volume=volume, amount=None)
+        if key in rows and rows[key] != bar:
+            rows[key] = None
+        else:
+            rows[key] = bar
+    return {"code": code, "bars": [rows[k] for k in sorted(rows) if rows[k] is not None]}
+
+
+def fetch_tencent_minute(code: str, limit: int, *, timeout: int = config.MINUTE_FALLBACK_TIMEOUT_S) -> dict[str, Any]:
+    params = urllib.parse.urlencode({"param": f"{code},m1,,{min(max(limit, 1), 1000)}"})
+    text = _http_get(config.TENCENT_MINUTE_URL + "?" + params, referer=config.TENCENT_REFERER,
+                     timeout=timeout, retries=0)
+    try:
+        result = parse_tencent_minute(json.loads(text), code)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise SourceError(f"腾讯分钟K返回无效数据：{exc}") from exc
+    if not result["bars"]:
+        raise NoDataError(f"{code} 腾讯分钟K无数据")
     return result
 
 
@@ -1046,10 +1099,12 @@ def fetch_minute(
     timeout: int = config.MINUTE_FETCH_TIMEOUT_S,
     fallback_timeout: int = config.MINUTE_FALLBACK_TIMEOUT_S,
 ) -> tuple[list[dict[str, Any]], str]:
-    """分钟 K 取数：东财主源 → 新浪次源（1 分钟只有东财）。"""
+    """东财主源；1m 回退腾讯真实 OHLC，其余周期回退新浪。"""
     attempts: list[tuple[str, Callable[[], Any]]] = [
         ("eastmoney_minute", lambda: fetch_eastmoney_minute(code, interval, limit, timeout=timeout))
     ]
+    if interval == 1:
+        attempts.append(("tencent_minute", lambda: fetch_tencent_minute(code, limit, timeout=fallback_timeout)))
     if interval in SINA_MINUTE_INTERVALS:
         attempts.append(
             ("sina_minute", lambda: fetch_sina_minute(code, interval, limit, timeout=fallback_timeout))
@@ -1272,6 +1327,7 @@ def _probe_cases() -> list[tuple[str, Callable[[], Any]]]:
         ("eastmoney_bars", lambda: fetch_eastmoney_bars("sh510300", 20, timeout=6)),
         ("sina_bars", lambda: fetch_sina_bars("sh510300", 20, timeout=6)),
         ("tencent_intraday", lambda: _fetch_tencent_intraday("sh510300", timeout=6)),
+        ("tencent_minute", lambda: fetch_tencent_minute("sh510300", 20, timeout=6)),
         ("eastmoney_minute", lambda: fetch_eastmoney_minute("sh510300", 5, 20, timeout=6)),
         ("sina_minute", lambda: fetch_sina_minute("sh510300", 5, 20, timeout=6)),
         ("eastmoney_fund", lambda: _fetch_fund_history_raw("sh510300")),

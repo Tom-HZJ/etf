@@ -11,6 +11,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from datetime import datetime
 from unittest import mock
 
 from etfmon import api, auth, collectors, config, observability, store, views
@@ -135,6 +136,45 @@ class ForwardAuthTest(_ServerCase):
         )
         self.assertEqual(status, 401)
         self.assertEqual(payload["error"]["code"], "unauthorized")
+
+    def test_test_account_can_read_but_cannot_change_watchlist(self) -> None:
+        headers = {"Remote-User": "test", **CLIENT_HEADER}
+        status, _, before = request(self.base, "GET", "/api/watchlist", headers=headers)
+        self.assertEqual(status, 200)
+        status, _, _ = request(self.base, "POST", "/api/watchlist", headers=headers,
+                               payload={"action": "remove", "code": before["items"][0]["code"]})
+        self.assertEqual(status, 403)
+        _, _, after = request(self.base, "GET", "/api/watchlist", headers=headers)
+        self.assertEqual(after["items"], before["items"])
+
+    def test_private_routes_check_authenticated_owner(self) -> None:
+        for path in ("/api/private/funds?user=tom", "/api/private/stock?code=sh600000&user=tom"):
+            self.assertEqual(request(self.base, "GET", path)[0], 401)
+            for user in ("test", "bob"):
+                self.assertEqual(request(self.base, "GET", path, headers={"Remote-User": user})[0], 403)
+        snapshot = {"snapshot_date": None, "items": [{"id": "fixture"}]}
+        store.write_json(store.path_for("private", "tom", "funds.json"), snapshot)
+        status, headers, payload = request(self.base, "GET", "/api/private/funds", headers={"Remote-User": "tom"})
+        self.assertEqual(status, 200)
+        self.assertIn("no-store", headers["Cache-Control"])
+        self.assertEqual(payload, snapshot)
+
+    def test_stock_forecast_expires_when_its_first_session_completes(self) -> None:
+        code = "sh600000"
+        base = store.path_for("private", "tom")
+        store.write_json(base / "stock-bars" / f"{code}.json", {
+            "code": code, "name": "Fixture", "source": "Fixture", "adjustment": "qfq",
+            "bars": [{"date": "2026-11-10", "open": 10, "high": 11, "low": 9, "close": 10}],
+        })
+        store.write_json(base / "forecasts" / f"{code}.json", {
+            "code": code, "as_of": "2026-11-10", "adjustment": "qfq",
+            "sessions": [{"date": "2026-11-11", "close": 10.1}, {"date": "2026-11-12", "close": 10.2}],
+        })
+        for moment, ready in (("2026-11-11T14:00:00+08:00", True), ("2026-11-11T16:00:00+08:00", False)):
+            with mock.patch.object(store, "now", return_value=datetime.fromisoformat(moment)):
+                status, _, result = request(self.base, "GET", f"/api/private/stock?code={code}", headers={"Remote-User": "tom"})
+            self.assertEqual(status, 200)
+            self.assertEqual(result["forecast"] is not None, ready)
 
     def test_login_logout_gone(self) -> None:
         for path in ("/api/auth/login", "/api/auth/logout"):
