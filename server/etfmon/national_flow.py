@@ -180,18 +180,25 @@ def build(windows: tuple[int, ...] = (5, 10, WINDOW, 60)) -> dict[str, Any]:
     # 当前值在过去全部样本中的分位（0=最低，1=最高）
     rank = sum(1 for v in values if v <= values[-1]) / len(values)
 
-    # 20 日累计变化占期初的比例，用于告警
+    # 20 日累计变化占期初的比例。
+    #
+    # 这里只是「大幅度变化」的事实陈述，不是交易信号。2026-11-14 用 208 个
+    # 交易日、7 档阈值、收益与回撤两个维度校准过：没有任何一档能稳定预测
+    # 后续方向，30-40% 的剧烈流出之后反而更抗跌（回撤改善 +2.11%）。
+    # 原因是份额是结果不是原因——赎回常发生在下跌之后，随后往往是反弹。
+    # 因此文案不得暗示方向，只陈述发生了什么。
     alert = None
     w20 = windows_out.get(str(WINDOW))
     if w20 and abs(w20['delta_pct']) >= ALERT_PCT:
         direction = '净流出' if w20['delta_pct'] < 0 else '净流入'
         alert = {
-            'level': 'warning',
-            'headline': f'{WINDOW} 日内篮子份额{direction} {abs(w20["delta_pct"]) * 100:.1f}%',
+            'level': 'notice',
+            'headline': f'{WINDOW} 日内份额{direction} {abs(w20["delta_pct"]) * 100:.1f}%',
             'detail': (
                 f'{w20["from"]} 至 {w20["to"]}，份额从 {values[-1 - WINDOW] / 1e8:.0f} 亿份'
                 f'变为 {values[-1] / 1e8:.0f} 亿份。'
-                '份额变化是交易所清算后的全部申赎结果，无法区分具体投资者。'
+                '这是交易所清算后的全部申赎结果，无法区分投资者，'
+                '历史样本也未显示它能预示后续方向。'
             ),
         }
 

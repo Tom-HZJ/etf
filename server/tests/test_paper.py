@@ -253,5 +253,34 @@ class PaperTests(unittest.TestCase):
         self.assertEqual(len(payload['exit_points']),1)
         self.assertEqual(payload['exit_points'][0]['code'],'sh588080')
 
+    def test_weekend_uses_last_close_without_claiming_a_live_quote(self):
+        """周末/收盘后仍应能估值，但必须标成 last_close 而不是当天报价。
+
+        否则整周末台账全是空值，看上去像没有数据；而在交易时段放宽松会
+        把陈旧价格当成现价算浮盈。两条路径必须分开。
+        """
+        self.seed_samples()
+        actions.process({'sh512980':quote()},moment(),paper_trading=True)
+
+        # 周五收盘后：报价时间与当下同日 -> 视为当日收盘引用
+        post_close = moment('2026-11-10T16:30:00+08:00')
+        cache = SimpleNamespace(snapshot=lambda: ({'sh512980':quote(10.5,moment())},moment().isoformat(),0))
+        app = views.App(cache=cache, started_at=post_close)
+        with patch.object(store,'now',return_value=post_close):
+            trade = api.dispatch_get(app,'/api/research/paper-trades',{})['trades'][0]
+        self.assertFalse(trade['mark_stale'])
+        self.assertEqual(trade['mark_basis'],'quote')
+        self.assertEqual(trade['mark_price'],10.5)
+
+        # 周六：报价仍是周五的 -> last_close，依然给出估值
+        weekend = moment('2026-11-14T10:00:00+08:00')
+        app2 = views.App(cache=cache, started_at=weekend)
+        with patch.object(store,'now',return_value=weekend):
+            trade2 = api.dispatch_get(app2,'/api/research/paper-trades',{})['trades'][0]
+        self.assertFalse(trade2['mark_stale'])
+        self.assertEqual(trade2['mark_basis'],'last_close')
+        self.assertEqual(trade2['mark_price'],10.5)
+        self.assertEqual(trade2['floating_pnl'],350)
+
 
 if __name__=='__main__':unittest.main()

@@ -201,18 +201,53 @@ def _trade_row(row):
 
 
 def _mark_position(trade, quote, moment):
-    """Value an open holding from the existing quote cache without ledger writes."""
+    """Value an open holding from the existing quote cache without ledger writes.
+
+    估值口径分两种：
+
+    - **交易时段**：报价必须是当天的、且不超过 STALE_AFTER_S，否则不算——
+      盘中的旧价会把浮盈算错。
+    - **非交易时段**（收盘后/周末/节假日）：用最近一个交易日的收盘价估値，
+      但把 ``mark_basis`` 标成 ``last_close``。否则整周末台账一片空白，
+      看上去像没有数据。
+    """
     stamp = store.parse_iso(quote.get('quote_time'))
     price = research.number(quote.get('price'))
-    stale = bool(quote.get('stale') or stamp is None or stamp > moment
-                 or stamp.astimezone(config.SHANGHAI_TZ).date() != moment.date()
-                 or (store.is_trading_time(moment) and (moment - stamp).total_seconds() > config.STALE_AFTER_S))
-    marked = _cash(price, trade['quantity']) if price is not None and price > 0 and not stale else None
+    if price is None or price <= 0:
+        return {'mark_price': None, 'mark_time': quote.get('quote_time'),
+                'mark_stale': True, 'mark_basis': None,
+                'floating_pnl': None, 'floating_return': None}
+
+    trading = store.is_trading_time(moment)
+    intraday_stale = bool(
+        quote.get('stale')
+        or stamp is None
+        or stamp > moment
+        or (trading and stamp.astimezone(config.SHANGHAI_TZ).date() != moment.date())
+        or (trading and (moment - stamp).total_seconds() > config.STALE_AFTER_S)
+    )
+
+    # 非交易时段：只接受「不晚于当下」的报价，当作最近收盘价。
+    if not trading and stamp is not None and stamp <= moment:
+        basis = 'last_close' if stamp.astimezone(config.SHANGHAI_TZ).date() != moment.date() else 'quote'
+        marked = _cash(price, trade['quantity'])
+        profit = marked - Decimal(str(trade['entry_amount']))
+        return {
+            'mark_price': price,
+            'mark_time': quote.get('quote_time'),
+            'mark_stale': False,
+            'mark_basis': basis,
+            'floating_pnl': float(profit),
+            'floating_return': float(profit / Decimal(str(trade['entry_amount']))),
+        }
+
+    marked = None if intraday_stale else _cash(price, trade['quantity'])
     profit = marked - Decimal(str(trade['entry_amount'])) if marked is not None else None
     return {
         'mark_price': price if marked is not None else None,
         'mark_time': quote.get('quote_time'),
-        'mark_stale': stale,
+        'mark_stale': intraday_stale,
+        'mark_basis': 'quote' if marked is not None else None,
         'floating_pnl': float(profit) if profit is not None else None,
         'floating_return': float(profit / Decimal(str(trade['entry_amount']))) if profit is not None else None,
     }
