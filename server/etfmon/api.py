@@ -242,6 +242,11 @@ def dispatch_get(app: views.App, path: str, query: Mapping[str, list[str]]) -> d
         from . import actions
         try:return actions.build_payload(model=_first(query,'model') or 'current',protection=_first(query,'protection') or 'none')
         except ValueError as exc:raise ApiError(400,'bad_request',str(exc)) from exc
+    if path == "/api/research/dca":
+        # 定投台账：与模拟交易台账分开。GET 只读，不生成新记录。
+        from . import dca
+        return dca.build_payload()
+
     if path == "/api/research/paper-trades":
         from . import paper
         try:

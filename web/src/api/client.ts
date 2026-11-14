@@ -19,6 +19,7 @@ import type {
   SearchResponse,
   SourcesResponse,
   Span,
+  DcaResponse,
   NationalFlowResponse,
   NationalLiveResponse,
   TeamMinuteResponse,
@@ -210,6 +211,24 @@ export async function fetchTeam(signal?: AbortSignal): Promise<TeamResponse> {
     return mockTeam();
   }
   return httpRequest<TeamResponse>('/api/team', { signal });
+}
+
+export async function fetchDca(signal?: AbortSignal): Promise<DcaResponse> {
+  if (isMock) {
+    await mockDelay(signal);
+    return {
+      policy: 'weekly-dca-v1',
+      config: { policy: 'weekly-dca-v1', code: 'sh512890', name: '红利低波ETF',
+                amount: 10000, weekday: 0, start: null, note: '' },
+      instrument: { code: 'sh512890', name: '红利低波ETF', last_date: null, last_close: null },
+      entries: [],
+      summary: { count: 0, total_quantity: 0, total_cost: 0, average_cost: null,
+                 market_value: null, unrealised: null, unrealised_pct: null,
+                 first_date: null, last_date: null },
+      notes: ['mock 模式无定投数据'],
+    };
+  }
+  return httpRequest<DcaResponse>('/api/research/dca', { signal });
 }
 
 export async function fetchNationalFlow(signal?: AbortSignal): Promise<NationalFlowResponse> {

@@ -642,3 +642,48 @@ export interface NationalLiveResponse {
   samples_today?: number;
   notes?: string[];
 }
+
+// ---------------------------------------------------------------- 红利低波定投台账
+
+export interface DcaEntry {
+  date: string;
+  price_date: string;
+  price: number;
+  amount: number;
+  quantity: number;
+  cost: number;
+}
+
+export interface DcaConfig {
+  policy: string;
+  code: string;
+  name: string;
+  amount: number;
+  weekday: number;
+  start: string | null;
+  note: string;
+}
+
+export interface DcaResponse {
+  policy: string;
+  config: DcaConfig;
+  instrument: {
+    code: string;
+    name: string;
+    last_date: string | null;
+    last_close: number | null;
+  };
+  entries: DcaEntry[];
+  summary: {
+    count: number;
+    total_quantity: number;
+    total_cost: number;
+    average_cost: number | null;
+    market_value: number | null;
+    unrealised: number | null;
+    unrealised_pct: number | null;
+    first_date: string | null;
+    last_date: string | null;
+  };
+  notes: string[];
+}
