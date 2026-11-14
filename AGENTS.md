@@ -116,3 +116,28 @@
 - 存量按用户要求裁减：`scripts/trim_ledger.py`，默认 dry-run，`--apply` 才写库，归档进 `removed_trades`。
 - 裁减排序：浮盈高优先保留 > 入场早 > 代码序。**不能按亏损优先保留**，那会让台账系统性偏向坏交易。
 - `test_review_paginates_beyond_the_action_snapshot_limit` 直接插库而不走 `buy()`，因为它验证的是读分页，不是开仓路径。
+
+## 推送前必须核对提交身份（硬规则，无例外）
+
+2026-11-15 事故：推送到公开仓库时只把邮箱改成 noreply，**忘记改 name**，
+导致 7 个提交的作者名是本机配置的真实中文名。发现时旧提交已通过
+`https://github.com/<owner>/<repo>/commit/<sha>` 对任何人开放（匿名 200）。
+
+处理：`git filter-branch` 重写全部 17 个提交 → 删库重建 → 重新推送，
+旧 SHA 现已全部 404。仓库无 star/fork/issue，重建零损失。
+
+**从今往后每次 `git push` 到公开仓库前，必须先跑：**
+
+```sh
+git log --format='%an <%ae>' | sort -u   # 必须只剩公开化后的身份
+git log --format='%an' | sort -u | wc -l # 应该只有 1 种
+```
+
+- 作者名与邮箱都不能是真实姓名、学校、单位、内网域名或私人邮箱。
+  本项目统一用 `Tom-HZJ <115476866+Tom-HZJ@users.noreply.github.com>`。
+- `--force` **不能**清除 GitHub 端的旧对象：分支指针移动了，但旧的
+  不可达提交仍可通过 commit URL 访问，要等 GitHub GC。真正彻底的做法
+  是删库重建（或联系 Support 请求 GC）。
+- 同理适用于提交信息正文：不写真实姓名、内网主机名、个人邮箱。
+- 已推送后才发现时，告知用户“别人本地/浏览器可能已有缓存”，这部分
+  清理不掉，由用户判断是否需要换账号。
