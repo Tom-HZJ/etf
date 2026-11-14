@@ -588,7 +588,7 @@ export interface MetaResponse {
 // ---------------------------------------------------------------- 国家队份额与实时监控
 
 export interface NationalFlowAlert {
-  level: 'warning';
+  level: 'notice' | 'warning';
   headline: string;
   detail: string;
 }

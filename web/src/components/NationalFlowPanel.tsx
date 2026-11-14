@@ -79,10 +79,21 @@ function LiveCurve({ points }: { points: { time: string; amount_yi: number }[] }
   );
 }
 
-function AlertStrip({ alert }: { alert: { headline: string; detail: string } }): React.JSX.Element {
+// 「大幅度变化」是事实陈述，不是交易信号。只有 level === 'warning'
+// （目前没有生产者）才用警示色，普通通知保持中性，避免被读成买卖提示。
+function AlertStrip({ alert }: { alert: { level?: string; headline: string; detail: string } }): React.JSX.Element {
+  const warn = alert.level === 'warning';
   return (
-    <div className="rounded-[var(--etf-radius-sm)] border border-[var(--etf-warn)]/40 bg-[var(--etf-warn)]/10 px-3 py-2">
-      <p className="text-[12px] font-medium text-[var(--etf-warn)]">{alert.headline}</p>
+    <div
+      className={
+        warn
+          ? 'rounded-[var(--etf-radius-sm)] border border-[var(--etf-warn)]/40 bg-[var(--etf-warn)]/10 px-3 py-2'
+          : 'rounded-[var(--etf-radius-sm)] border border-[var(--etf-line)] bg-[var(--etf-panel-2)] px-3 py-2'
+      }
+    >
+      <p className={`text-[12px] font-medium ${warn ? 'text-[var(--etf-warn)]' : 'text-[var(--etf-fg)]'}`}>
+        {alert.headline}
+      </p>
       <p className="mt-1 text-[11px] leading-relaxed text-[var(--etf-muted)]">{alert.detail}</p>
     </div>
   );
