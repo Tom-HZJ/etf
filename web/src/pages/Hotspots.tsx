@@ -18,6 +18,7 @@ import {
   fmtYiSigned,
 } from '../lib/format';
 import { hrefFor } from '../lib/router';
+import { Delta } from '../components/Numbers';
 import { PageHeader, Panel, SectionHead } from '../components/Page';
 import { HeatBar, MiniBars, Sparkline } from '../components/Spark';
 import { HotStateBadge, LabelBadge } from '../components/StateBadge';
@@ -81,7 +82,7 @@ function RankTable({ rows }: { rows: HotspotRow[] }): React.JSX.Element {
               <td>
                 <a className="datatable__name" href={hrefFor('market', { code: row.code })}>
                   <span className="text-[var(--etf-ink)]">{row.name}</span>
-                  <span className="text-[10px] text-[var(--etf-faint)]">{row.direction}</span>
+                  <span className="text-[11px] text-[var(--etf-faint-strong)]">{row.direction}</span>
                   <span className="datatable__code">{row.code.slice(2)}</span>
                 </a>
               </td>
@@ -146,7 +147,7 @@ function RankCards({ rows }: { rows: HotspotRow[] }): React.JSX.Element {
               <div className="mt-1.5">
                 <HeatBar value={row.heat} hot={row.state === 'hot'} />
               </div>
-              <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-[var(--etf-faint)]">
+              <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-[var(--etf-faint-strong)]">
                 <span>
                   5日 <span className={`num block ${deltaClass(row.ret_5d)}`}>{fmtPct(row.ret_5d)}</span>
                 </span>
@@ -219,7 +220,7 @@ function FlowCard({ data }: { data: HotspotsResponse }): React.JSX.Element {
       </div>
 
       <div className="mt-4">
-        <div className="mb-1 flex items-center justify-between text-[10px] text-[var(--etf-faint)]">
+        <div className="mb-1 flex items-center justify-between text-[11px] text-[var(--etf-faint-strong)]">
           <span>份额快照 · {flow.snapshots.length} 条</span>
           <span className="mono">亿份</span>
         </div>
@@ -247,11 +248,11 @@ function FlowCard({ data }: { data: HotspotsResponse }): React.JSX.Element {
               {fmtSigned(flow.open_period.net, 2)}
               <span className="unit">亿元</span>
             </span>
-            <span className="text-[10px] text-[var(--etf-faint)]">份额变化</span>
+            <span className="text-[11px] text-[var(--etf-faint-strong)]">份额变化</span>
             <span className={`num text-[11px] ${deltaClass(openPct)}`}>
               {openPct === null ? '—' : `${fmtSigned(openPct * 100, 2)}%`}
             </span>
-            <span className="text-[10px] text-[var(--etf-faint)]">报告期未结束，随份额快照滚动</span>
+            <span className="text-[11px] text-[var(--etf-faint-strong)]">报告期未结束，随份额快照滚动</span>
           </div>
         </div>
       ) : null}
@@ -307,7 +308,7 @@ export function HotspotsPage({
             <>
               <span className="state-badge badge-gold">{data.state}</span>
               <span className="state-badge badge-muted">数据截至 {data.as_of ?? '—'}</span>
-              <span className="mono hidden text-[9px] text-[var(--etf-faint)] sm:inline">{data.version}</span>
+              <span className="mono hidden text-[11px] text-[var(--etf-muted)] sm:inline">{data.version}</span>
             </>
           ) : null
         }
@@ -332,7 +333,7 @@ export function HotspotsPage({
                   <InfoTip content={data.rule} label="热度规则" />
                 </div>
                 <p className="mt-2 max-w-[52ch] text-[12px] leading-[1.8] text-[var(--etf-muted)]">{data.headline}</p>
-                <div className="mt-3 flex flex-wrap gap-2 text-[10.5px] text-[var(--etf-faint)]">
+                <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-[var(--etf-faint-strong)]">
                   <span className="mono">方向 {data.summary.direction_count}</span>
                   <span className="divider-dot" aria-hidden="true" />
                   <span className="mono">强势/升温 {data.summary.strong_or_warming}</span>
@@ -357,9 +358,12 @@ export function HotspotsPage({
                     <div className="metric__label">MA20 &gt; MA60</div>
                     <div className="num mt-0.5 text-[14px] text-[var(--etf-ink)]">{data.summary.above_ma60}</div>
                   </div>
+                  {/* 「高位拥挤」上方图例已经在数，这里换成图例没有的横截面收益。 */}
                   <div className="rounded-md border border-[var(--etf-line)] bg-[var(--etf-surface)] px-2.5 py-2">
-                    <div className="metric__label">高位拥挤</div>
-                    <div className="num mt-0.5 text-[14px] text-[var(--etf-amber)]">{data.summary.crowded}</div>
+                    <div className="metric__label">20日收益中位</div>
+                    <div className="num mt-0.5 text-[14px]">
+                      <Delta value={data.summary.median_ret_20d === null ? null : data.summary.median_ret_20d * 100} kind="pct" digits={1} />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -369,7 +373,7 @@ export function HotspotsPage({
           <SectionHead
             index="01"
             title="热度排行"
-            actions={<span className="mono text-[9px] text-[var(--etf-faint)]">{rows.length} / {data.rows.length} 方向</span>}
+            actions={<span className="mono text-[11px] text-[var(--etf-muted)]">{rows.length} / {data.rows.length} 方向</span>}
           />
           <Panel
             title="方向排行"
@@ -398,7 +402,7 @@ export function HotspotsPage({
             <RankTable rows={visibleRows} />
             <RankCards rows={visibleRows} />
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--etf-line)] px-4 py-2.5">
-              <span className="mono text-[9px] text-[var(--etf-faint)]">
+              <span className="mono text-[11px] text-[var(--etf-muted)]">
                 显示 {visibleRows.length} / {rows.length} 行 · 首屏仅渲染窗口内的行
               </span>
               {visibleRows.length < rows.length ? (
@@ -412,7 +416,7 @@ export function HotspotsPage({
             </div>
           </Panel>
 
-          <SectionHead index="02" title="宽基承接" actions={<span className="mono text-[9px] text-[var(--etf-faint)]">FLOW / LARGEST CSI300</span>} />
+          <SectionHead index="02" title="宽基承接" actions={<span className="mono text-[11px] text-[var(--etf-muted)]">FLOW / LARGEST CSI300</span>} />
           <div className="grid gap-4 xl:grid-cols-12">
             <div className="xl:col-span-7">
               <FlowCard data={data} />
@@ -449,7 +453,7 @@ export function HotspotsPage({
                             {period.large_redemption ? (
                               <HotStateBadge state="fading" label="大额赎回" />
                             ) : (
-                              <span className="text-[10px] text-[var(--etf-faint)]">—</span>
+                              <span className="text-[11px] text-[var(--etf-faint-strong)]">—</span>
                             )}
                           </td>
                         </tr>

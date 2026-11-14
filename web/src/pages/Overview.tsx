@@ -61,20 +61,32 @@ function NationalFeature({ data }: { data: OverviewResponse }): React.JSX.Elemen
     >
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
+          {/* 估算值缺失时，不让占位符占据全页最大字号。
+              那个位置应该给一屏里唯一有叙述的对象——近 N 个清算日的净流量。 */}
           <div className="chip-row mb-1.5">
             <LabelBadge tone="gold">
-              盘中估算总额
+              {estimateAmount === null ? `近 ${national.five_day_days ?? 5} 个清算日净流量` : '盘中估算总额'}
             </LabelBadge>
             <LabelBadge tone="muted">
-              {estimateAmount===null?'估算待更新':`${fmtMonthDay(estimate?.date)} 现价 ${fmtTime(estimate?.quote_time)}`}
+              {estimateAmount === null
+                ? (national.trend_state ? '按交易所清算份额' : '等待份额数据')
+                : `${fmtMonthDay(estimate?.date)} 现价 ${fmtTime(estimate?.quote_time)}`}
             </LabelBadge>
           </div>
-          <div className={`big-num ${deltaClass(estimateAmount)}`} aria-live="polite">
-            {fmtYiSigned(estimateAmount, 2)}
+          <div className="big-num" aria-live="polite">
+            {estimateAmount === null ? (
+              <Delta value={(national.five_day_flow ?? 0) / 1e8} kind="number" digits={2} />
+            ) : (
+              <span className={deltaClass(estimateAmount)}>
+                {fmtYiSigned(estimateAmount, 2)}
+              </span>
+            )}
             <span className="unit">亿元</span>
           </div>
-          <div className="mt-1.5 text-[10.5px] leading-relaxed text-[var(--etf-faint)]">
-            快照份额差 {fmtSigned(estimateAmount!==null&&estimate?estimate.share_delta/1e8:null, 2)} 亿份
+          <div className="mt-1.5 text-[11px] leading-relaxed text-[var(--etf-faint-strong)]">
+            {estimateAmount === null
+              ? '估算待更新 · 缺少本轮份额快照'
+              : `快照份额差 ${fmtSigned(estimate ? estimate.share_delta / 1e8 : null, 2)} 亿份`}
           </div>
         </div>
         <div className="text-right">
@@ -112,7 +124,7 @@ function NationalFeature({ data }: { data: OverviewResponse }): React.JSX.Elemen
       <div className="mt-4">
         <div className="mb-1.5 flex items-center justify-between">
           <span className="metric__label">逐日净申赎 · 近 {dailyYi.length} 日</span>
-          <span className="mono text-[9px] text-[var(--etf-faint)]">亿元</span>
+          <span className="mono text-[11px] text-[var(--etf-muted)]">亿元</span>
         </div>
         <MiniBars values={dailyYi} height={34} label="近 12 日篮子净申赎" />
         <div className="mono mt-1 flex justify-between text-[8.5px] text-[var(--etf-faint)]">
@@ -165,7 +177,7 @@ function HotTop({ data }: { data: OverviewResponse['hotspots'] }): React.JSX.Ele
             </div>
           </div>
           <div className="hidden w-[168px] sm:block">
-            <div className="flex items-center justify-between text-[10px] text-[var(--etf-faint)]">
+            <div className="flex items-center justify-between text-[11px] text-[var(--etf-faint-strong)]">
               <span>热度</span>
               <span className="num text-[var(--etf-ink)]">{fmtNum(row.heat, 0)}</span>
             </div>
@@ -213,7 +225,7 @@ function Breadth({ breadth }: { breadth: OverviewResponse['breadth'] }): React.J
 
       <div className="mt-4 space-y-2.5">
         <div>
-          <div className="flex items-center justify-between text-[10.5px] text-[var(--etf-faint)]">
+          <div className="flex items-center justify-between text-[11px] text-[var(--etf-faint-strong)]">
             <span>MA20 在 MA60 上方</span>
             <span className="num text-[var(--etf-ink-2)]">
               {breadth.above_ma60}/{breadth.total}
@@ -224,7 +236,7 @@ function Breadth({ breadth }: { breadth: OverviewResponse['breadth'] }): React.J
           </div>
         </div>
         <div>
-          <div className="flex items-center justify-between text-[10.5px] text-[var(--etf-faint)]">
+          <div className="flex items-center justify-between text-[11px] text-[var(--etf-faint-strong)]">
             <span>涨跌家数</span>
             <span className="num">
               <span className="rise">{breadth.advancers}</span>

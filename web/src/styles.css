@@ -35,6 +35,8 @@
   --etf-ink-2: #c5cfdb;
   --etf-muted: #8e9cad;
   --etf-faint: #748294;
+  /* 比 faint 略亮、过 AA 4.5:1：用于仍属次要但承载判断的小字 */
+  --etf-faint-strong: #8b99aa;
 
   /* Market direction (A股习惯：红涨绿跌) -------------------------------- */
   --etf-up: #f2685b;
@@ -107,6 +109,7 @@ html[data-theme="light"] {
   --etf-ink-2: #334254;
   --etf-muted: #4e5c6c;
   --etf-faint: #5f6d7e;
+  --etf-faint-strong: #5a6879;
   --etf-up: #c9372c;
   --etf-down: #08795f;
   --etf-gold: #8a6520;
@@ -721,7 +724,7 @@ body::before {
 
 .panel__sub {
   font-family: var(--etf-font-mono);
-  font-size: 9.5px;
+  font-size: 11px;
   letter-spacing: 0.12em;
   color: var(--etf-faint);
   text-transform: uppercase;
@@ -813,7 +816,7 @@ body::before {
 }
 
 .metric__label {
-  font-size: 10.5px;
+  font-size: 11.5px;
   letter-spacing: 0.06em;
   color: var(--etf-faint);
   white-space: nowrap;
@@ -831,7 +834,7 @@ body::before {
 
 .metric__hint {
   margin-top: 2px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--etf-faint);
   white-space: nowrap;
 }
@@ -984,6 +987,21 @@ body::before {
   overflow-x: auto;
   scrollbar-width: thin;
   overscroll-behavior-x: contain;
+  /* 移动端表格常常超出容器 90px 以上，而细滚动条几乎看不见。
+     右侧渐隐阴影告诉读者“右边还有内容”，滚到底时消失。 */
+  background:
+    linear-gradient(90deg, var(--etf-surface) 30%, transparent) left / 28px 100% no-repeat local,
+    linear-gradient(270deg, var(--etf-surface) 30%, transparent) right / 28px 100% no-repeat local,
+    linear-gradient(90deg, transparent 70%, color-mix(in srgb, var(--etf-ink) 14%, transparent)) right / 22px 100% no-repeat scroll,
+    linear-gradient(270deg, transparent 70%, color-mix(in srgb, var(--etf-ink) 14%, transparent)) left / 22px 100% no-repeat scroll;
+  background-attachment: local, local, scroll, scroll;
+}
+
+/* 滚到头的两端不再显示阴影，避免暗示不存在的更多内容。 */
+@media (max-width: 767px) {
+  .scroll-x {
+    scrollbar-width: auto;
+  }
 }
 
 .datatable {
@@ -1000,7 +1018,7 @@ body::before {
   border-bottom: 1px solid var(--etf-line);
   background: var(--etf-surface);
   color: var(--etf-faint);
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.06em;
   text-align: left;
@@ -1043,7 +1061,7 @@ body::before {
 
 .datatable__code {
   font-family: var(--etf-font-mono);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.02em;
   color: var(--etf-faint);
 }
@@ -1260,7 +1278,7 @@ body::before {
 
 .group-pill__count {
   font-family: var(--etf-font-num);
-  font-size: 10px;
+  font-size: 11px;
   color: var(--etf-faint);
 }
 
@@ -1384,7 +1402,7 @@ body::before {
   border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
   border-radius: 99px;
   background: color-mix(in srgb, currentColor 9%, transparent);
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 1.65;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -1514,7 +1532,7 @@ body::before {
 .wl-row__meta {
   margin-top: 1px;
   font-family: var(--etf-font-mono);
-  font-size: 9.5px;
+  font-size: 11px;
   letter-spacing: 0.04em;
   color: var(--etf-faint);
   white-space: nowrap;
@@ -1596,7 +1614,7 @@ body::before {
 
 .src-row__id {
   font-family: var(--etf-font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   letter-spacing: 0.03em;
   color: var(--etf-ink-2);
   white-space: nowrap;
@@ -1606,7 +1624,7 @@ body::before {
 
 .src-row__meta {
   font-family: var(--etf-font-num);
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--etf-faint);
   white-space: nowrap;
 }
@@ -2263,7 +2281,7 @@ html[data-theme="light"] .action-desk,html[data-theme="light"] .action-strip { -
 }
 .research-entry small {
   display: block;
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.13em;
   color: var(--etf-gold, #c4a963);
   margin-bottom: 8px;
@@ -2458,7 +2476,7 @@ html[data-theme="light"] .action-desk,html[data-theme="light"] .action-strip { -
   text-align: left;
   color: var(--etf-muted);
   font-weight: 400;
-  font-size: 10px;
+  font-size: 11.5px;
 }
 .research-page td {
   padding: 13px 16px;
@@ -2483,7 +2501,7 @@ html[data-theme="light"] .action-desk,html[data-theme="light"] .action-strip { -
 .research-page td small {
   display: block;
   color: var(--etf-muted);
-  font-size: 10px;
+  font-size: 11px;
   margin-top: 4px;
 }
 .research-num {
@@ -2556,7 +2574,7 @@ html[data-theme="light"] .action-desk,html[data-theme="light"] .action-strip { -
   margin-bottom: 10px;
 }
 .research-provenance {
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.9;
   color: var(--etf-faint);
   overflow-wrap: anywhere;
@@ -2641,7 +2659,7 @@ html[data-theme="light"] .action-desk,html[data-theme="light"] .action-strip { -
     font-size: 24px;
   }
   .research-stat small {
-    font-size: 10px;
+    font-size: 11px;
   }
   .research-tools {
     padding: 16px;
@@ -2713,8 +2731,10 @@ html[data-theme="light"] .action-desk,html[data-theme="light"] .action-strip { -
   .research-table-wrap {
     max-height: 420px;
   }
-  .mobilebar a {
-    font-size: 9px;
+.mobilebar a {
+  /* 底栏是移动端唯一导航，8 个页签每个约 49px 宽；
+     9px 在手机上偏小，提到 10px 仍能容纳四字标签。 */
+  font-size: 10px;
   }
   .research-page .research-head h1 {
     font-size: 26px;

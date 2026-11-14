@@ -38,7 +38,7 @@ export function ChangeCell({
   return (
     <span className={`num ${tone} inline-flex items-center gap-1`}>
       {showArrow ? (
-        <span aria-hidden="true" className="text-[8px] leading-none opacity-80">
+        <span aria-hidden="true" className="text-[10px] leading-none opacity-80">
           {glyph}
         </span>
       ) : null}
@@ -129,7 +129,7 @@ export function RankMove({
       className={`num inline-flex items-center gap-0.5 ${up ? 'rise' : 'fall'}`}
       aria-label={up ? `排名上升 ${value}` : `排名下降 ${Math.abs(value)}`}
     >
-      <span aria-hidden="true" className="text-[8px] leading-none">
+      <span aria-hidden="true" className="text-[10px] leading-none">
         {up ? '▲' : '▼'}
       </span>
       {Math.abs(value)}

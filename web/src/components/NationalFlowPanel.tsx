@@ -118,7 +118,7 @@ export function NationalFlowPanel({
     <Panel
       title="份额趋势"
       sub="交易所清算后份额 · 按日"
-      actions={<span className="mono text-[9px] text-[var(--etf-faint)]">SETTLED FLOW</span>}
+      actions={<span className="mono text-[11px] text-[var(--etf-muted)]">SETTLED FLOW</span>}
     >
       {flow?.state !== 'ok' ? (
         <p className="py-6 text-center text-xs muted">{flow?.message ?? '还没有份额数据'}</p>
@@ -130,12 +130,12 @@ export function NationalFlowPanel({
             <div className="bg-[var(--etf-panel)] px-3 py-2.5">
               <div className="text-[10px] text-[var(--etf-muted)]">当前总份额</div>
               <div className="num mt-1 text-[15px]">{yi(flow.current_shares_yi)} 亿</div>
-              <div className="mt-0.5 text-[10px] text-[var(--etf-faint)]">清算日 {flow.last ?? '—'}</div>
+              <div className="mt-0.5 text-[11px] text-[var(--etf-faint-strong)]">清算日 {flow.last ?? '—'}</div>
             </div>
             <div className="bg-[var(--etf-panel)] px-3 py-2.5">
               <div className="text-[10px] text-[var(--etf-muted)]">历史分位</div>
               <div className="num mt-1 text-[15px]">{pct(flow.percentile, 0)}</div>
-              <div className="mt-0.5 text-[10px] text-[var(--etf-faint)]">过去 {flow.days} 个交易日</div>
+              <div className="mt-0.5 text-[11px] text-[var(--etf-faint-strong)]">过去 {flow.days} 个交易日</div>
             </div>
             <div className="bg-[var(--etf-panel)] px-3 py-2.5">
               <div className="text-[10px] text-[var(--etf-muted)]">连续性</div>
@@ -146,12 +146,12 @@ export function NationalFlowPanel({
               >
                 {streakText}
               </div>
-              <div className="mt-0.5 text-[10px] text-[var(--etf-faint)]">最近一日方向</div>
+              <div className="mt-0.5 text-[11px] text-[var(--etf-faint-strong)]">最近一日方向</div>
             </div>
             <div className="bg-[var(--etf-panel)] px-3 py-2.5">
               <div className="text-[10px] text-[var(--etf-muted)]">篮子成分</div>
               <div className="num mt-1 text-[15px]">{flow.basket_size} 只</div>
-              <div className="mt-0.5 text-[10px] text-[var(--etf-faint)]">
+              <div className="mt-0.5 text-[11px] text-[var(--etf-faint-strong)]">
                 最少覆盖 {flow.min_coverage}/{flow.basket_size}
               </div>
             </div>
@@ -160,7 +160,7 @@ export function NationalFlowPanel({
           <div>
             <div className="mb-1.5 flex items-baseline justify-between">
               <span className="text-[10px] tracking-wide text-[var(--etf-muted)]">区间份额变化</span>
-              <span className="mono text-[9px] text-[var(--etf-faint)]">
+              <span className="mono text-[11px] text-[var(--etf-muted)]">
                 {flow.first} → {flow.last}
               </span>
             </div>
@@ -220,7 +220,7 @@ export function NationalLivePanel({
     <Panel
       title="盘中成交额"
       sub={live?.as_of ? `${live.date} ${live.as_of.slice(0, 5)} · 20 秒采样` : '实时'}
-      actions={<span className="mono text-[9px] text-[var(--etf-faint)]">INTRADAY PROXY</span>}
+      actions={<span className="mono text-[11px] text-[var(--etf-muted)]">INTRADAY PROXY</span>}
     >
       {live?.state !== 'ok' ? (
         <p className="py-6 text-center text-xs muted">
@@ -234,24 +234,24 @@ export function NationalLivePanel({
             <div className="bg-[var(--etf-panel)] px-3 py-2.5">
               <div className="text-[10px] text-[var(--etf-muted)]">今日累计成交</div>
               <div className="num mt-1 text-[15px]">{yi(live.amount_yi, 1)} 亿</div>
-              <div className="mt-0.5 text-[10px] text-[var(--etf-faint)]">{live.samples_today} 个采样点</div>
+              <div className="mt-0.5 text-[11px] text-[var(--etf-faint-strong)]">{live.samples_today} 个采样点</div>
             </div>
             <div className="bg-[var(--etf-panel)] px-3 py-2.5">
               <div className="text-[10px] text-[var(--etf-muted)]">同一时刻基线</div>
               <div className="num mt-1 text-[15px]">{yi(live.baseline_amount_yi, 1)} 亿</div>
-              <div className="mt-0.5 text-[10px] text-[var(--etf-faint)]">过去 {live.baseline_days} 日</div>
+              <div className="mt-0.5 text-[11px] text-[var(--etf-faint-strong)]">过去 {live.baseline_days} 日</div>
             </div>
             <div className="bg-[var(--etf-panel)] px-3 py-2.5">
               <div className="text-[10px] text-[var(--etf-muted)]">放量倍数</div>
               <div className={`num mt-1 text-[15px] ${ratio != null && ratio >= 1.6 ? 'rise' : ''}`}>
                 {ratio == null ? '—' : `${fmtNum(ratio, 2)}×`}
               </div>
-              <div className="mt-0.5 text-[10px] text-[var(--etf-faint)]">1.6× 以上提示</div>
+              <div className="mt-0.5 text-[11px] text-[var(--etf-faint-strong)]">1.6× 以上提示</div>
             </div>
             <div className="bg-[var(--etf-panel)] px-3 py-2.5">
               <div className="text-[10px] text-[var(--etf-muted)]">篮子成分</div>
               <div className="num mt-1 text-[15px]">{live.basket_size} 只</div>
-              <div className="mt-0.5 text-[10px] text-[var(--etf-faint)]">26 只固定篮子</div>
+              <div className="mt-0.5 text-[11px] text-[var(--etf-faint-strong)]">26 只固定篮子</div>
             </div>
           </div>
 

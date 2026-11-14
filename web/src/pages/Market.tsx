@@ -403,7 +403,7 @@ function DetailChart({
             </span>
           </div>
         )}
-        <span className="mono text-[9px] text-[var(--etf-faint)]">
+        <span className="mono text-[11px] text-[var(--etf-muted)]">
           {minute
             ? minutes?.as_of
               ? `最新 ${minutes.as_of}`
@@ -450,7 +450,7 @@ function DetailChart({
                 ? '该标的暂无分钟走势数据。'
                 : '该标的暂无本地 K 线。'}
           </p>
-          <p className="text-[10.5px] text-[var(--etf-faint)]">
+          <p className="text-[11px] text-[var(--etf-faint-strong)]">
             暂时没有行情，请稍后刷新。
           </p>
           <div className="flex justify-center">
@@ -772,7 +772,7 @@ export function MarketPage({
 
           {(quote?.kind==='etf' || /^(sh5|sz1[56])/.test(selected)) ? <HoldingsPanel code={selected} refreshTick={refreshTick}/> : null}
 
-          <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-[var(--etf-faint)]">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--etf-faint-strong)]">
             <span>日/周/月蜡烛图可滚轮缩放和拖拽；分钟走势固定全天时间轴、午休断开、滚轮不缩放。指数不可加入自选。</span>
             {barsData ? <span className="mono">区间统计 · {barsData.stats.change_label}</span> : null}
           </div>

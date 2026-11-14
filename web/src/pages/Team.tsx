@@ -101,7 +101,7 @@ function TeamMinutePanel({
           <p className="text-[12px] text-[var(--etf-ink-2)]">
             {data.warning ? `分钟走势暂不可用：${data.warning}` : '等待全体成分的有效分钟数据。'}
           </p>
-          <p className="text-[10px] text-[var(--etf-faint)]">不插值、不画假数据；日/周/月合成 K 仍可查看。</p>
+          <p className="text-[11px] text-[var(--etf-faint-strong)]">不插值、不画假数据；日/周/月合成 K 仍可查看。</p>
           <Button label="稍后重试" size="sm" variant="secondary" onClick={onRetry} />
         </div>
       ) : (
@@ -115,7 +115,7 @@ function TeamMinutePanel({
                 <i style={{ background: 'var(--etf-ink-2)' }} />成交量
               </span>
             </div>
-            <span className="mono text-[9px] text-[var(--etf-faint)]">
+            <span className="mono text-[11px] text-[var(--etf-muted)]">
               {bars.at(-1) ? `完整数据至 ${bars.at(-1)!.time}` : '—'}
               {data.method.latest_observed_at ? ` · 最新成分 ${data.method.latest_coverage}/${data.method.codes}` : ''}
             </span>
@@ -226,11 +226,11 @@ function TeamTable({ team }: { team: TeamResponse }): React.JSX.Element {
                   </a>
                 </td>
                 <td className="text-[var(--etf-muted)]">{row.group}</td>
-                <td className="num r">{fmtNum(row.price, 3)}<div className="text-[9px] text-[var(--etf-faint)]">报价 {fmtTime(row.quote_time)}</div></td>
+                <td className="num r">{fmtNum(row.price, 3)}<div className="text-[11px] text-[var(--etf-muted)]">报价 {fmtTime(row.quote_time)}</div></td>
                 <td className={`num r ${deltaClass(row.change_pct)}`}>{fmtPct(row.change_pct)}</td>
-                <td className="num r">{fmtMoney(row.quote_amount)}<div className="text-[9px] text-[var(--etf-faint)]">{row.quote_volume==null?'—':`${fmtNum(row.quote_volume/10000,2)} 万手`}</div></td>
+                <td className="num r">{fmtMoney(row.quote_amount)}<div className="text-[11px] text-[var(--etf-muted)]">{row.quote_volume==null?'—':`${fmtNum(row.quote_volume/10000,2)} 万手`}</div></td>
                 <td className="num r">{row.turnover==null?'—':`${fmtNum(row.turnover*100,2)}%`}</td>
-                <td className="num r">{fmtNum(toYi(row.shares), 2)}<div className="text-[9px] text-[var(--etf-faint)]">{row.shares_date ?? '日期待核实'} · {row.shares_source==='sse_settled_etf_shares'?'上交所':row.shares_source==='szse_settled_etf_shares'?'深交所':'未核实'}</div></td>
+                <td className="num r">{fmtNum(toYi(row.shares), 2)}<div className="text-[11px] text-[var(--etf-muted)]">{row.shares_date ?? '日期待核实'} · {row.shares_source==='sse_settled_etf_shares'?'上交所':row.shares_source==='szse_settled_etf_shares'?'深交所':'未核实'}</div></td>
                 <td className={`num r ${deltaClass(row.share_delta)}`}>
                   {fmtSigned(toYi(row.share_delta), 2)}
                 </td>
@@ -253,7 +253,7 @@ function TeamTable({ team }: { team: TeamResponse }): React.JSX.Element {
             <div className="flex items-baseline justify-between gap-3">
               <div className="min-w-0">
                 <div className="truncate text-[13px] text-[var(--etf-ink)]">{row.name}</div>
-                <div className="mono text-[9.5px] text-[var(--etf-faint)]">
+                <div className="mono text-[11px] text-[var(--etf-muted)]">
                   {row.code.slice(2)} · {row.group}<div>份额 {row.shares_date ?? "待核实"} · {row.shares_source==='sse_settled_etf_shares'?'上交所':row.shares_source==='szse_settled_etf_shares'?'深交所':'未核实'} · 报价 {fmtTime(row.quote_time)}</div>
                 </div>
               </div>
@@ -262,7 +262,7 @@ function TeamTable({ team }: { team: TeamResponse }): React.JSX.Element {
                 <div className={`num text-[11px] ${deltaClass(row.change_pct)}`}>{fmtPct(row.change_pct)}</div>
               </div>
             </div>
-            <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-[var(--etf-faint)]">
+            <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-[var(--etf-faint-strong)]">
               <span>成交额 <span className="num text-[var(--etf-ink-2)]">{fmtMoney(row.quote_amount)}</span></span>
               <span>成交量 <span className="num text-[var(--etf-ink-2)]">{row.quote_volume==null?'—':`${fmtNum(row.quote_volume/10000,2)}万手`}</span></span>
               <span className="text-right">换手率 <span className="num text-[var(--etf-ink-2)]">{row.turnover==null?'—':`${fmtNum(row.turnover*100,2)}%`}</span></span>
@@ -425,7 +425,7 @@ export function TeamPage({ mode, refreshTick }: { mode: ThemeMode; refreshTick: 
           <NationalLivePanel live={nationalLive.data} failed={nationalLive.status === 'error'} />
           <NationalFlowPanel flow={nationalFlow.data} />
 
-          {data.intraday.length>0 ? <details className="panel"><summary className="cursor-pointer px-4 py-3 text-[12px] text-[var(--etf-muted)]">查看盘中估算走势</summary><div className="px-4 pb-3"><FlowCurve points={data.intraday.map(p=>({time:p.time,amount:p.amount}))} height={isMobile?180:210} label="今日份额快照口径估算走势"/><p className="mt-2 text-[10px] text-[var(--etf-faint)]">份额快照差×现价，随价格重估。</p></div></details> : null}
+          {data.intraday.length>0 ? <details className="panel"><summary className="cursor-pointer px-4 py-3 text-[12px] text-[var(--etf-muted)]">查看盘中估算走势</summary><div className="px-4 pb-3"><FlowCurve points={data.intraday.map(p=>({time:p.time,amount:p.amount}))} height={isMobile?180:210} label="今日份额快照口径估算走势"/><p className="mt-2 text-[11px] text-[var(--etf-faint-strong)]">份额快照差×现价，随价格重估。</p></div></details> : null}
 
           <TeamMinutePanel
             minute={teamMinute}
@@ -438,7 +438,7 @@ export function TeamPage({ mode, refreshTick }: { mode: ThemeMode; refreshTick: 
           <SectionHead
             index="01"
             title="整体结构"
-            actions={<span className="mono text-[9px] text-[var(--etf-faint)]">COMPOSITE / TREND</span>}
+            actions={<span className="mono text-[11px] text-[var(--etf-muted)]">COMPOSITE / TREND</span>}
           />
           <div className="grid gap-4 xl:grid-cols-12">
             <div className="xl:col-span-8">
@@ -556,7 +556,7 @@ export function TeamPage({ mode, refreshTick }: { mode: ThemeMode; refreshTick: 
           <SectionHead
             index="01"
             title="清算份额与逐日申赎"
-            actions={<span className="mono text-[9px] text-[var(--etf-faint)]">INTRADAY / DAILY FLOW</span>}
+            actions={<span className="mono text-[11px] text-[var(--etf-muted)]">INTRADAY / DAILY FLOW</span>}
           />
           <div className="grid gap-4 xl:grid-cols-12">
             <div className="xl:col-span-7">
@@ -625,10 +625,10 @@ export function TeamPage({ mode, refreshTick }: { mode: ThemeMode; refreshTick: 
             </div>
           </div>
 
-          <SectionHead index="02" title="篮子明细" actions={<span className="mono text-[9px] text-[var(--etf-faint)]">26 BASKETS</span>} />
+          <SectionHead index="02" title="篮子明细" actions={<span className="mono text-[11px] text-[var(--etf-muted)]">26 BASKETS</span>} />
           <TeamTable team={data} />
 
-          <SectionHead index="03" title="口径与报告期" actions={<span className="mono text-[9px] text-[var(--etf-faint)]">METHOD / PERIODS</span>} />
+          <SectionHead index="03" title="口径与报告期" actions={<span className="mono text-[11px] text-[var(--etf-muted)]">METHOD / PERIODS</span>} />
           <div className="grid gap-4 xl:grid-cols-12">
             <div className="xl:col-span-7">
               <Panel title="报告期申赎" sub="东方财富基金档案 · 与逐日份额差口径不同" bodyClassName="">
@@ -656,7 +656,7 @@ export function TeamPage({ mode, refreshTick }: { mode: ThemeMode; refreshTick: 
                             {period.large_redemption ? (
                               <HotStateBadge state="fading" label="大额净赎回" />
                             ) : (
-                              <span className="text-[10.5px] text-[var(--etf-faint)]">—</span>
+                              <span className="text-[11px] text-[var(--etf-faint-strong)]">—</span>
                             )}
                           </td>
                           <td className="num r text-[var(--etf-muted)]">{period.funds ?? '—'}</td>
@@ -716,7 +716,7 @@ export function TeamPage({ mode, refreshTick }: { mode: ThemeMode; refreshTick: 
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-[var(--etf-faint)]">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--etf-faint-strong)]">
             <span>提示：成交额、量和换手率来自二级市场行情，不能识别国家队买卖；份额与净申赎按交易所清算日更新。</span>
             <a className="nav-action" href={hrefFor('market', { code: 'sh510300' })}>
               看 510300 行情 <ChevronRight size={12} aria-hidden="true" />

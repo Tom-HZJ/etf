@@ -6,13 +6,13 @@
 口径：
   - 每次定投金额固定（CNY），按当日收盘价换算份额。
   - 费用默认 0：ETF 场内佣金各券商差异大，不做假假设；页面上说明。
-  - 分红不单独记：净值序列用前复权价，分红已隐含在价格里。
+  - 使用本地日线参考价；不将复权价等同于已实现的分红再投资。
   - 不做卖出，没有“收益率承诺”。
 """
 
 from __future__ import annotations
 
-import json
+import math
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
@@ -60,6 +60,11 @@ def save_config(**changes) -> dict[str, Any]:
     return current
 
 
+def is_active() -> bool:
+    """Only an explicitly saved DCA configuration switches ledger mode."""
+    return config_path().is_file() and load_config().get('policy') == POLICY
+
+
 def _load_entries() -> list[dict[str, Any]]:
     payload = store.read_json(ledger_path(), {})
     rows = payload.get('entries') if isinstance(payload, dict) else None
@@ -76,13 +81,28 @@ def _next_weekday(from_day: date, weekday: int) -> date:
     return from_day + timedelta(days=delta or 7)
 
 
+def _completed_bars(bars: list[dict], moment) -> list[dict]:
+    local = moment.astimezone(config.SHANGHAI_TZ)
+    cutoff = local.date() if local.hour * 60 + local.minute >= config.CLOSE_RECORD else local.date() - timedelta(days=1)
+    result = []
+    for bar in bars:
+        try:
+            day = date.fromisoformat(bar['date'])
+            price = float(bar['close'])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if day <= cutoff and day.weekday() < 5 and math.isfinite(price) and price > 0:
+            result.append(bar)
+    return sorted(result, key=lambda b: b['date'])
+
+
 def _price_on(bars: list[dict], day: str) -> tuple[str, float] | None:
-    """取该日或此前最近一个交易日的收盘价。"""
-    prior = [b for b in bars if b['date'] <= day]
-    if not prior:
+    """First available completed session on/after the schedule, never prior close."""
+    later = [b for b in bars if b['date'] >= day]
+    if not later:
         return None
-    last = max(prior, key=lambda b: b['date'])
-    return last['date'], float(last['close'])
+    first = min(later, key=lambda b: b['date'])
+    return first['date'], float(first['close'])
 
 
 def _quantity(amount: Decimal, price: Decimal, lot: int = LOT_SIZE) -> int:
@@ -101,19 +121,25 @@ def run_due(moment=None) -> int:
     today = moment.astimezone(config.SHANGHAI_TZ).date()
     cfg = load_config()
     code = cfg['code']
-    bars = store.load_bars(code)
+    bars = _completed_bars(store.load_bars(code), moment)
     if not bars:
         return 0
     amount = Decimal(str(cfg['amount']))
     weekday = int(cfg['weekday'])
+    if not amount.is_finite() or amount <= 0 or not 0 <= weekday <= 4:
+        raise ValueError('Invalid weekly DCA amount or weekday')
     entries = _load_entries()
     done = {e['date'] for e in entries}
 
     first = cfg.get('start')
     try:
-        cursor = date.fromisoformat(first) if first else _next_weekday(today - timedelta(days=7), weekday)
+        cursor = date.fromisoformat(first) if first else _next_weekday(today, weekday)
     except (TypeError, ValueError):
-        cursor = _next_weekday(today - timedelta(days=7), weekday)
+        raise ValueError('Invalid DCA start date')
+
+    if not first:
+        save_config(start=cursor.isoformat())
+    cursor += timedelta(days=(weekday - cursor.weekday()) % 7)
 
     added = 0
     while cursor <= today:
@@ -126,6 +152,8 @@ def run_due(moment=None) -> int:
                 if qty > 0:
                     entries.append({
                         'date': key,
+                        'kind': 'historical_simulation',
+                        'recorded_at': moment.isoformat(),
                         'price_date': price_date,
                         'price': price,
                         'amount': float(amount),
@@ -146,7 +174,7 @@ def build_payload() -> dict[str, Any]:
     cfg = load_config()
     code = cfg['code']
     entries = _load_entries()
-    bars = store.load_bars(code)
+    bars = _completed_bars(store.load_bars(code), store.now())
     last_close = None
     last_date = None
     if bars:
@@ -167,7 +195,26 @@ def build_payload() -> dict[str, Any]:
         if total_cost > 0:
             unrealised_pct = float((Decimal(str(market_value)) - total_cost) / total_cost)
 
+    # Each point uses only quantities effective by that date and that day's close.
+    # Preserve legacy entries verbatim, including their original price_date.
+    history = []
+    ordered = sorted(entries, key=lambda e: max(e['date'], e['price_date']))
+    index = 0
+    quantity = 0
+    cost = Decimal('0')
+    for bar in bars:
+        while index < len(ordered) and max(ordered[index]['date'], ordered[index]['price_date']) <= bar['date']:
+            entry = ordered[index]
+            quantity += int(entry['quantity'])
+            cost += Decimal(str(entry['cost']))
+            index += 1
+        if quantity:
+            history.append({'date': bar['date'], 'cost': float(cost),
+                            'value': float((Decimal(quantity) * Decimal(str(bar['close']))).quantize(CENT)),
+                            'quantity': quantity, 'price': float(bar['close'])})
+
     return {
+        'history': history,
         'policy': POLICY,
         'config': cfg,
         'instrument': {'code': code, 'name': cfg.get('name') or code,
@@ -185,9 +232,10 @@ def build_payload() -> dict[str, Any]:
             'last_date': entries[-1]['date'] if entries else None,
         },
         'notes': [
-            '按周定额买入并长期持有，不设卖点。',
+            '历史模拟，非真实持仓或成交；收益为未年化的价格收益。',
+            '按周定额买入；休市或日线未到时等待首个可用收盘参考价。',
             '费用按 0 计：不同券商佣金差异大，不做假设；实际成本会略高。',
-            '价格用前复权序列，分红再投资已隐含在内。',
+            '使用本地日线参考序列，复权与分红口径未独立核验，不代表已实现分红再投资。',
             '份额按整手取整，不足一手的余额不记入台账。',
         ],
     }

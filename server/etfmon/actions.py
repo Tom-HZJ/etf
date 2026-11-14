@@ -12,7 +12,7 @@ import json
 import math
 import threading
 from datetime import timedelta
-from . import config, store, research, replay, strategy, opportunities, representatives, paper
+from . import config, store, research, replay, strategy, opportunities, representatives, paper, dca
 
 VERSION = 'own-minute-observation-v3'
 BUY_POINT_POLICY = 'first-actual-buy-per-etf-day-v1'
@@ -280,7 +280,7 @@ def evaluate(plan,quote,samples,moment):
 def process(quotes,moment=None,*,paper_trading=False):
     """Collector-only writer; live observations are append-only and never backdated."""
     moment=(moment or store.now()).astimezone(config.SHANGHAI_TZ)
-    if paper_trading and moment.date().isoformat()>=paper.START_DATE:
+    if paper_trading and not dca.is_active() and moment.date().isoformat()>=paper.START_DATE:
         with paper.connect() as db:
             return _process(quotes,moment,db)
     return _process(quotes,moment,None)

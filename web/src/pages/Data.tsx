@@ -235,7 +235,7 @@ function SourcesPanel({
                 }`}
                 title={alert.message}
               >
-                [{alert.level}] {alert.message} <span className="mono text-[9px] text-[var(--etf-faint)]">{fmtDateTime(alert.at)}</span>
+                [{alert.level}] {alert.message} <span className="mono text-[11px] text-[var(--etf-muted)]">{fmtDateTime(alert.at)}</span>
               </div>
             ))}
           </div>
@@ -311,7 +311,7 @@ function SourcesPanel({
                         {CIRCUIT_LABEL[source.circuit]}
                       </span>
                     </td>
-                    <td className="max-w-[220px] truncate text-[10.5px] text-[var(--etf-faint)]" title={source.last_error ?? undefined}>
+                    <td className="max-w-[220px] truncate text-[11px] text-[var(--etf-faint-strong)]" title={source.last_error ?? undefined}>
                       {source.last_error ?? '—'}
                     </td>
                   </tr>
@@ -326,7 +326,7 @@ function SourcesPanel({
                 <div className="flex items-baseline justify-between gap-2">
                   <div className="min-w-0">
                     <div className="truncate text-[12px] text-[var(--etf-ink)]">{source.name}</div>
-                    <div className="mono text-[9px] text-[var(--etf-faint)]">{source.id} · {SOURCE_KIND_LABEL[source.kind]}</div>
+                    <div className="mono text-[11px] text-[var(--etf-muted)]">{source.id} · {SOURCE_KIND_LABEL[source.kind]}</div>
                   </div>
                   <span className={`state-badge ${sourceTone(source)}`}>{SOURCE_STATUS_LABEL[source.status]}</span>
                 </div>
@@ -395,7 +395,7 @@ function EntitiesPanel({ meta }: { meta: MetaResponse }): React.JSX.Element {
       title="实体清单"
       sub={`${meta.entities.length} 个 ETF · 篮子与热点方向`}
       actions={
-        <span className="mono text-[9px] text-[var(--etf-faint)]">
+        <span className="mono text-[11px] text-[var(--etf-muted)]">
           {rows.length} / {filteredRows.length} 行
         </span>
       }
@@ -456,7 +456,7 @@ function DefinitionsPanel({ meta }: { meta: MetaResponse }): React.JSX.Element {
           <div key={key} className="py-2.5 border-b border-[var(--etf-line)] last:border-b-0">
             <div className="flex items-baseline gap-2">
               <span className="text-[12px] font-medium text-[var(--etf-ink)]">{DEF_LABEL[key] ?? key}</span>
-              <span className="mono text-[9px] text-[var(--etf-faint)]">{key}</span>
+              <span className="mono text-[11px] text-[var(--etf-muted)]">{key}</span>
             </div>
             <p className="mt-1 text-[11px] leading-[1.7] text-[var(--etf-muted)]">{value}</p>
           </div>
@@ -644,7 +644,7 @@ function AboutPanel({ meta }: { meta: MetaResponse }): React.JSX.Element {
           <div key={entry.version}>
             <div className="flex items-center gap-2">
               <span className="mono text-[10px] text-[var(--etf-gold)]">{entry.version}</span>
-              <span className="mono text-[9px] text-[var(--etf-faint)]">{entry.date}</span>
+              <span className="mono text-[11px] text-[var(--etf-muted)]">{entry.date}</span>
             </div>
             <ul className="mt-1 space-y-1">
               {entry.items.map((item) => (
@@ -721,7 +721,7 @@ export function DataPage({
                 {healthData.status === 'ok' ? '服务运行正常' : '服务降级'}
               </span>
               <span className="state-badge badge-muted">{healthData.version}</span>
-              <span className="mono text-[9px] text-[var(--etf-faint)]">{fmtNum(healthData.uptime_s / 3600, 1)}h</span>
+              <span className="mono text-[11px] text-[var(--etf-muted)]">{fmtNum(healthData.uptime_s / 3600, 1)}h</span>
             </>
 
           ) : null
@@ -745,7 +745,7 @@ export function DataPage({
             </div>
           </div>
 
-          <SectionHead index="01" title="实体与口径" actions={<span className="mono text-[9px] text-[var(--etf-faint)]">ENTITIES / DEFINITIONS</span>} />
+          <SectionHead index="01" title="实体与口径" actions={<span className="mono text-[11px] text-[var(--etf-muted)]">ENTITIES / DEFINITIONS</span>} />
           {!metaData && meta.status === 'error' ? (
             <ErrorPanel error={meta.error} onRetry={meta.reload} title="元数据加载失败" />
           ) : !metaData ? (
@@ -763,7 +763,7 @@ export function DataPage({
 
           {metaData ? (
             <>
-              <SectionHead index="02" title="安全 / 会话" actions={<span className="mono text-[9px] text-[var(--etf-faint)]">AUTH / SESSIONS</span>} />
+              <SectionHead index="02" title="安全 / 会话" actions={<span className="mono text-[11px] text-[var(--etf-muted)]">AUTH / SESSIONS</span>} />
               <div className="grid gap-4 xl:grid-cols-12">
                 <div className="xl:col-span-6">
                   <SecurityPanel authMode={authMode} user={user} onLogout={onLogout} />
@@ -773,7 +773,7 @@ export function DataPage({
                 </div>
               </div>
 
-              <SectionHead index="03" title="版本与边界" actions={<span className="mono text-[9px] text-[var(--etf-faint)]">VERSION / LIMITS</span>} />
+              <SectionHead index="03" title="版本与边界" actions={<span className="mono text-[11px] text-[var(--etf-muted)]">VERSION / LIMITS</span>} />
               <div className="grid gap-4 xl:grid-cols-12">
                 <div className="xl:col-span-6">
                   <LimitationsPanel meta={metaData} />
@@ -785,7 +785,7 @@ export function DataPage({
                         <div key={source.id} className="rounded-lg border border-[var(--etf-line)] bg-[var(--etf-surface-2)] px-3 py-2">
                           <div className="flex items-baseline justify-between gap-2">
                             <span className="text-[12px] text-[var(--etf-ink)]">{source.name}</span>
-                            <span className="mono text-[9px] text-[var(--etf-faint)]">{source.id}</span>
+                            <span className="mono text-[11px] text-[var(--etf-muted)]">{source.id}</span>
                           </div>
                           <div className="mt-0.5 text-[10.5px] leading-relaxed text-[var(--etf-muted)]">{source.usage}</div>
                         </div>
@@ -800,7 +800,7 @@ export function DataPage({
             </>
           ) : null}
 
-          <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-[var(--etf-faint)]">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--etf-faint-strong)]">
             <span>数据新鲜度规则：交易时段报价超过 300 秒标记 stale；非交易时段以最近交易日收盘为准。</span>
             <span className="mono">generated_at · {fmtDateTime(healthData.generated_at)}</span>
           </div>

@@ -208,7 +208,7 @@ function Tape({ indices }: { indices: Quote[] | undefined }): React.JSX.Element 
           </a>
         ))}
         {(!indices || indices.length === 0) ? (
-          <div className="tape__cell text-[10.5px] text-[var(--etf-faint)]">指数加载中…</div>
+          <div className="tape__cell text-[11px] text-[var(--etf-faint-strong)]">指数加载中…</div>
         ) : null}
       </div>
     </div>

@@ -37,3 +37,6 @@ Thumbs.db
 scripts/fetch_us_daily.py
 scripts/normalize_us_daily.py
 data/us_daily/
+
+# 设计评审的过程产物（截图、report.json）
+.oil-ui/

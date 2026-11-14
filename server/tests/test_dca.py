@@ -91,6 +91,72 @@ class DcaTests(unittest.TestCase):
         self.assertEqual(payload['summary']['count'], 0)
         self.assertIsNone(payload['summary']['market_value'])
 
+    def test_waits_for_completed_session_and_defers_holiday(self):
+        self._seed([{'date': '2026-01-02', 'close': 1.0},
+                    {'date': '2026-01-06', 'close': 1.1}])
+        dca.save_config(start='2026-01-05')
+        for timestamp in ('2026-01-05T18:00:00+08:00', '2026-01-06T14:59:00+08:00'):
+            self.assertEqual(dca.run_due(datetime.fromisoformat(timestamp)), 0)
+        self.assertEqual(dca.run_due(datetime.fromisoformat('2026-01-06T18:00:00+08:00')), 1)
+        entry = dca._load_entries()[0]
+        self.assertEqual(entry['date'], '2026-01-05')
+        self.assertEqual(entry['price_date'], '2026-01-06')
+        self.assertEqual(entry['price'], 1.1)
+
+    def test_default_start_is_persisted_not_moving_each_run(self):
+        self._seed(make_bars())
+        dca.save_config()
+        self.assertEqual(dca.run_due(datetime.fromisoformat('2026-01-06T18:00:00+08:00')), 0)
+        self.assertEqual(dca.load_config()['start'], '2026-01-12')
+        self.assertEqual(dca.run_due(datetime.fromisoformat('2026-01-12T18:00:00+08:00')), 1)
+
+    def test_history_uses_date_prices_and_preserves_entries(self):
+        self._seed([{'date': '2026-01-05', 'close': 1.0},
+                    {'date': '2026-01-06', 'close': 2.0},
+                    {'date': '2026-01-12', 'close': 3.0}])
+        dca.save_config(start='2026-01-05')
+        dca.run_due(datetime.fromisoformat('2026-01-12T18:00:00+08:00'))
+        original = dca.ledger_path().read_bytes()
+        payload = dca.build_payload()
+        self.assertEqual(payload['history'][0]['value'], 10000)
+        self.assertEqual(payload['history'][1]['value'], 20000)
+        self.assertEqual(payload['history'][-1]['value'], 39900)
+        self.assertEqual(dca.ledger_path().read_bytes(), original)
+        self._seed([{'date': '2026-01-05', 'close': 1.0},
+                    {'date': '2026-01-06', 'close': 2.0},
+                    {'date': '2026-01-12', 'close': 4.0}])
+        self.assertEqual(dca.build_payload()['history'][:2], payload['history'][:2])
+
+    def test_invalid_prices_and_future_bars_cannot_fill(self):
+        self._seed([{'date': '2026-01-05', 'close': 0},
+                    {'date': '2026-01-06', 'close': -1},
+                    {'date': '2026-01-07', 'close': 2}])
+        dca.save_config(start='2026-01-05')
+        self.assertEqual(dca.run_due(datetime.fromisoformat('2026-01-06T18:00:00+08:00')), 0)
+
+    def test_active_dca_disables_legacy_writer_without_deleting_it(self):
+        from etfmon import actions, paper
+        dca.save_config(start='2026-01-05')
+        with mock.patch.object(paper, 'connect', side_effect=AssertionError('legacy write')), \
+             mock.patch.object(actions, '_process', return_value={}) as process:
+            moment = datetime.fromisoformat('2026-11-16T10:00:00+08:00')
+            actions.process({}, moment, paper_trading=True)
+            self.assertIsNone(process.call_args.args[2])
+
+    def test_maintenance_calls_dca_before_unrelated_network_work(self):
+        import threading
+        from etfmon import maintenance
+        dca.save_config(start='2026-01-05')
+        lock = threading.RLock()
+        def due(moment):
+            self.assertTrue(lock._is_owned())
+            return 1
+        with mock.patch.object(dca, 'run_due', side_effect=due) as run, \
+             mock.patch.object(maintenance.settled_shares, 'refresh_due', side_effect=RuntimeError('stop offline test')):
+            with self.assertRaisesRegex(RuntimeError, 'stop offline test'):
+                maintenance.run_due(lock)
+            run.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

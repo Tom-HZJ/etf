@@ -674,6 +674,7 @@ export interface DcaResponse {
     last_close: number | null;
   };
   entries: DcaEntry[];
+  history?: { date: string; cost: number; value: number; quantity: number; price: number }[];
   summary: {
     count: number;
     total_quantity: number;

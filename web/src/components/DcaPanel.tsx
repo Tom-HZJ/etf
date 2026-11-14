@@ -12,22 +12,13 @@ const WEEKDAY = ['周一', '周二', '周三', '周四', '周五'];
 const money = (value: number | null | undefined, digits = 0): string =>
   value == null ? '—' : fmtNum(value, digits);
 
-/** 累计投入成本 vs 当前市值的小图，按月聚合。 */
+/** 历史累计成本与各日收盘参考市值。 */
 function DcaCurve({ data }: { data: DcaResponse }): React.JSX.Element | null {
   const points = useMemo(() => {
-    const entries = [...data.entries].sort((a, b) => a.date.localeCompare(b.date));
-    if (entries.length < 2) return [];
-    let qty = 0;
-    let cost = 0;
-    return entries.map((entry) => {
-      qty += entry.quantity;
-      cost += entry.cost;
-      return { date: entry.date, cost, qty };
-    });
-  }, [data.entries]);
+    return data.history ?? [];
+  }, [data.history]);
 
-  const lastPrice = data.instrument.last_close;
-  if (points.length < 2 || lastPrice == null) return null;
+  if (points.length < 2) return null;
 
   const width = 720;
   const height = 132;
@@ -35,7 +26,7 @@ function DcaCurve({ data }: { data: DcaResponse }): React.JSX.Element | null {
   const right = 10;
   const top = 10;
   const bottom = 20;
-  const values = points.flatMap((p) => [p.cost, p.qty * lastPrice]);
+  const values = points.flatMap((p) => [p.cost, p.value]);
   const ceiling = Math.max(...values) * 1.06 || 1;
   const x = (i: number): number =>
     left + (i / (points.length - 1)) * (width - left - right);
@@ -44,7 +35,7 @@ function DcaCurve({ data }: { data: DcaResponse }): React.JSX.Element | null {
   const line = (key: 'cost' | 'value'): string =>
     points
       .map((p, i) => {
-        const v = key === 'cost' ? p.cost : p.qty * lastPrice;
+        const v = key === 'cost' ? p.cost : p.value;
         return `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`;
       })
       .join(' ');
@@ -54,7 +45,7 @@ function DcaCurve({ data }: { data: DcaResponse }): React.JSX.Element | null {
       className="mt-3 block w-full"
       viewBox={`0 0 ${width} ${height}`}
       role="img"
-      aria-label="定投累计成本与当前市值走势"
+      aria-label="定投历史模拟累计成本与当日市值"
     >
       <line
         x1={left}
@@ -91,7 +82,7 @@ export function DcaPanel({ refreshTick }: { refreshTick: number }): React.JSX.El
   }
   if (!data) {
     return (
-      <Panel title="红利低波定投">
+      <Panel title="红利低波定投 · 模拟">
         <p className="py-6 text-center text-xs muted" role="status">正在读取定投记录…</p>
       </Panel>
     );
@@ -105,21 +96,21 @@ export function DcaPanel({ refreshTick }: { refreshTick: number }): React.JSX.El
 
   return (
     <Panel
-      title="红利低波定投"
+      title="红利低波定投 · 模拟"
       sub={`${instrument.code.replace(/^(sh|sz)/, '')} ${instrument.name} · 每${WEEKDAY[config.weekday] ?? '周'} ${money(config.amount)} 元`}
-      actions={<span className="mono text-[9px] text-[var(--etf-faint)]">WEEKLY DCA</span>}
+      actions={<span className="mono text-[11px] text-[var(--etf-muted)]">WEEKLY DCA</span>}
     >
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-px overflow-hidden rounded-[var(--etf-radius-sm)] bg-[var(--etf-line)] sm:grid-cols-4">
           <div className="bg-[var(--etf-panel)] px-3 py-2.5">
             <div className="text-[10px] text-[var(--etf-muted)]">累计投入</div>
             <div className="num mt-1 text-[15px]">{money(summary.total_cost)}</div>
-            <div className="mt-0.5 text-[10px] text-[var(--etf-faint)]">{summary.count} 期</div>
+            <div className="mt-0.5 text-[11px] text-[var(--etf-faint-strong)]">{summary.count} 期</div>
           </div>
           <div className="bg-[var(--etf-panel)] px-3 py-2.5">
             <div className="text-[10px] text-[var(--etf-muted)]">当前市值</div>
             <div className="num mt-1 text-[15px]">{money(summary.market_value)}</div>
-            <div className="mt-0.5 text-[10px] text-[var(--etf-faint)]">
+            <div className="mt-0.5 text-[11px] text-[var(--etf-faint-strong)]">
               现价 {instrument.last_close == null ? '—' : fmtNum(instrument.last_close, 3)}
             </div>
           </div>
@@ -137,7 +128,7 @@ export function DcaPanel({ refreshTick }: { refreshTick: number }): React.JSX.El
             <div className="num mt-1 text-[15px]">
               {summary.average_cost == null ? '—' : fmtNum(summary.average_cost, 4)}
             </div>
-            <div className="mt-0.5 text-[10px] text-[var(--etf-faint)]">
+            <div className="mt-0.5 text-[11px] text-[var(--etf-faint-strong)]">
               {fmtNum(summary.total_quantity, 0)} 份
             </div>
           </div>
@@ -163,7 +154,7 @@ export function DcaPanel({ refreshTick }: { refreshTick: number }): React.JSX.El
               <thead>
                 <tr className="text-[10px] text-[var(--etf-muted)]">
                   <th className="px-3 py-1.5 text-left font-normal">定投日</th>
-                  <th className="px-3 py-1.5 text-right font-normal">成交价</th>
+                  <th className="px-3 py-1.5 text-right font-normal">参考价</th>
                   <th className="px-3 py-1.5 text-right font-normal">份额</th>
                   <th className="px-3 py-1.5 text-right font-normal">金额</th>
                 </tr>
@@ -172,7 +163,7 @@ export function DcaPanel({ refreshTick }: { refreshTick: number }): React.JSX.El
                 {recent.length === 0 ? (
                   <tr>
                     <td colSpan={4} className="px-3 py-4 text-center text-[var(--etf-faint)]">
-                      还没有定投记录。下周一会自动生成第一期。
+                      还没有定投记录，等待计划日及可用收盘数据。
                     </td>
                   </tr>
                 ) : (

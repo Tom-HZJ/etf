@@ -2,7 +2,7 @@
 from __future__ import annotations
 import threading
 import time
-from . import coverage, holdings, sources, store, share_history, evaluation, history, settled_shares
+from . import coverage, holdings, sources, store, share_history, evaluation, history, settled_shares, dca
 
 _RUN_LOCK=threading.Lock()
 
@@ -14,10 +14,20 @@ def run_due(write_lock,stop=None,force=False):
     store.write_json(path,state)
     try:
         errors=[];repaired=[]
+        # Run independently of slow coverage/holdings work; reuse the collector lock.
+        if (not stop or not stop.is_set()) and dca.is_active():
+            try:
+                with write_lock:
+                    state['dca'] = {'added': dca.run_due(moment), 'checked_at': moment.isoformat()}
+            except (OSError, ValueError) as exc:
+                errors.append({'task': 'dca', 'error': str(exc)[:240]})
         if not stop or not stop.is_set():
             state['settled_shares']=settled_shares.refresh_due(moment)
             if state['settled_shares'].get('error'):errors.append({'task':'settled_shares','error':state['settled_shares']['error']})
-        codes=coverage.tracked_codes();state['total_symbols']=len(codes)
+        codes=coverage.tracked_codes()
+        if dca.is_active():
+            codes=list(dict.fromkeys([*codes, dca.load_config()['code']]))
+        state['total_symbols']=len(codes)
         # A stale calendar must not hide gaps in every ETF simultaneously.
         # Weekday holidays remain "pending verification", never invented sessions.
         for code in ('sh000300','sh000001','sz399001'):
