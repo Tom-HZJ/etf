@@ -9,7 +9,7 @@ import {ACTIVE_PROFILE} from '../lib/activePolicy';
 import {activeActions,clock,quoteClock,confirmationLabel,emptyMessage} from '../lib/actionDisplay';
 import {newBuyPoints,recordedBuyPoints,pointKey,readBuyDismissals,saveBuyDismissals} from '../lib/buyPoints';
 import {SellPoints} from '../components/SellPoints';
-import {PaperTrades} from '../components/PaperTrades';
+import {DcaPanel} from '../components/DcaPanel';
 import {fmtNum} from '../lib/format';
 import {recordedSellPoints,sellPointLabel} from '../lib/sellPoints';
 const EmbeddedMarket=lazy(()=>import('./Market').then(m=>({default:m.MarketPage})));
@@ -89,8 +89,7 @@ export function ResearchPage({refreshTick,mode}:{refreshTick:number;mode:ThemeMo
     </details>
     <SellPoints data={data} active={active} now={now} view="records" onOpen={(p,e)=>open(p,e,true)}/>
    </>}
-   <PaperTrades openCount={data?.paper_ledger?.open_count} refreshTick={refreshTick}
-    onOpen={(trade,point,element)=>open(trade,element,true,point)}/>
+   <DcaPanel refreshTick={refreshTick}/>
    {data && resource.status!=='error' ? <details className="buy-records"><summary>ETF清单 <span>{allRows.length}只持续监测 · 点击展开</span></summary>
     <section className="research-list action-watchlist" aria-labelledby="watchlist-title">
      <div className="research-tools"><div><h2 id="watchlist-title">关注清单</h2><span>{rows.length} / {allRows.length} 只</span></div><input aria-label="搜索ETF名称或代码" placeholder="搜索名称 / 代码" value={query} onChange={e=>setQuery(e.target.value)}/><select aria-label="筛选提醒分类" value={filter} onChange={e=>setFilter(e.target.value as Filter)}>{FILTERS.map(([value,label])=><option value={value} key={value}>{label} · {allRows.filter(r=>matches(r,value)).length}</option>)}</select></div>
