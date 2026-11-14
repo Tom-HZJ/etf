@@ -1,4 +1,5 @@
 import copy
+import json
 import hashlib
 import os
 import tempfile
@@ -103,9 +104,19 @@ class PaperTests(unittest.TestCase):
     def test_review_paginates_beyond_the_action_snapshot_limit(self):
         event={**actions.evaluate(plan(),quote(),samples(),moment()),
                'observed_at':moment().isoformat(),'live_recorded':True,'version':actions.VERSION}
+        # 直接写库，不走 paper.buy()：本例验证读取分页，而开仓函数带有
+        # 单日/总持仓上限（MAX_NEW_PER_DAY、MAX_OPEN_POSITIONS），
+        # 故意堆 205 笔属于测试场景，不是真实交易路径。
         with paper.connect() as db:
             for index in range(205):
-                self.assertTrue(paper.buy(db,{**event,'code':f'sh51{index:04d}','event_id':f'entry-{index}'},moment()))
+                db.execute(
+                    'INSERT INTO trades (code,name,model,protection,buy_event_id,entry_time,'
+                    'entry_price,initial_stop,target_price,buy_event,quantity) '
+                    'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                    (f'sh51{index:04d}', f'测试{index}', paper.MODEL, paper.PROTECTION,
+                     f'entry-{index}', moment().isoformat(), 10.15, 9.8, 10.5,
+                     json.dumps(event, ensure_ascii=False), 1000))
+            db.commit()
             self.assertEqual(len(paper.snapshot(db)['trades']),200)
         last_page=paper.review('open', page=9)
         self.assertEqual(last_page['total'],205)
@@ -282,5 +293,50 @@ class PaperTests(unittest.TestCase):
         self.assertEqual(trade2['mark_price'],10.5)
         self.assertEqual(trade2['floating_pnl'],350)
 
+
+    def _buy_event(self, code, name, event_id, when=None):
+        """构造一个能通过 valid_event 的买事件。
+
+        actions.evaluate() 只给评估结果，event_id / observed_at / live_recorded
+        是 collector 写入 journal 时才补的，这里手动对齐真实形状。
+        """
+        at = when or moment()
+        base = actions.evaluate(plan(), quote(), samples(), at)
+        return {**base, 'code': code, 'name': name, 'event_id': event_id,
+                'observed_at': at.isoformat(), 'live_recorded': True}
+
+    def test_position_caps_block_same_day_pile_on(self):
+        """单日新开仓上限：同一个反弹日不能无限开仓。
+
+        没有这条时，一个反弹日会开出十几笔，名义上分散、实质上是同一注
+        押了十几万，与回放引擎的单仓串行模型对不上。
+        """
+        self.seed_samples()
+        with paper.connect() as db:
+            opened = 0
+            for i in range(paper.MAX_NEW_PER_DAY + 4):
+                event = self._buy_event(f'sh5109{i:02d}', f'测试{i}', f'cap-{i}')
+                if paper.buy(db, event, moment()):
+                    opened += 1
+            db.commit()
+        self.assertEqual(opened, paper.MAX_NEW_PER_DAY)
+
+    def test_total_open_cap_rejects_further_buys(self):
+        """总持仓上限：即使跨日，也不能超过同时持仓数。"""
+        self.seed_samples()
+        with paper.connect() as db:
+            for i in range(paper.MAX_OPEN_POSITIONS):
+                day = moment() + timedelta(days=i)
+                event = self._buy_event(f'sz1599{i:02d}', f'测{i}', f'tot-{i}', day)
+                paper.buy(db, event, day)
+            db.commit()
+            open_now = db.execute(
+                'SELECT COUNT(*) AS n FROM trades WHERE exit_event_id IS NULL'
+            ).fetchone()['n']
+            self.assertGreater(open_now, 0)
+            # 已达上限后，新的一天的新标的也不能再进
+            later = moment() + timedelta(days=paper.MAX_OPEN_POSITIONS + 1)
+            extra = self._buy_event('sh512660', '越界', 'over-cap', later)
+            self.assertFalse(paper.buy(db, extra, later))
 
 if __name__=='__main__':unittest.main()

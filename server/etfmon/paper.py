@@ -18,6 +18,12 @@ MODEL, PROTECTION = 'expanded', 'none'
 LOT_SIZE = 100
 ENTRY_THRESHOLD = 10_000
 PAGE_SIZE = 25
+
+# 仓位上限。没有这两条时，同一个反弹日会一次性开出十几笔，
+# 名义上是十几笔独立交易，实质是同一注押了十几万——
+# 而回放引擎本身就是单仓串行，两边资金模型对不上。
+MAX_NEW_PER_DAY = 5      # 单日新开仓上限
+MAX_OPEN_POSITIONS = 12  # 同时持仓上限
 CENT = Decimal('0.01')
 
 
@@ -110,11 +116,31 @@ def valid_event(event, side, moment):
     return local.weekday()<5 and (570<=minute<690 or 780<=minute<900)
 
 
+def _position_headroom(db, day):
+    """今天还能开几笔仓。返回 0 表示已满。
+
+    两道限制各自独立：单日新开数限制「一次性押注」，总持仓数限制
+    「名义分散、实质集中」。两者都要满足才能开仓。
+    """
+    same_day = db.execute(
+        'SELECT COUNT(*) AS n FROM trades WHERE substr(entry_time,1,10)=?', (day,)
+    ).fetchone()['n']
+    open_now = db.execute(
+        'SELECT COUNT(*) AS n FROM trades WHERE exit_event_id IS NULL'
+    ).fetchone()['n']
+    by_day = MAX_NEW_PER_DAY - same_day
+    by_total = MAX_OPEN_POSITIONS - open_now
+    return max(0, min(by_day, by_total))
+
+
 def buy(db, event, moment):
     if not valid_event(event, ('buy',), moment):
         return False
     if db.execute('SELECT 1 FROM removed_trades WHERE buy_event_id=? OR (code=? AND entry_date=?)',
                   (event['event_id'], event['code'], event['observed_at'][:10])).fetchone():
+        return False
+    day = event['observed_at'][:10]
+    if _position_headroom(db, day) <= 0:
         return False
     price = float(event['reference_price'])
     stop = research.number(event.get('stop_price'))
